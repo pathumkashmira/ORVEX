@@ -1,0 +1,140 @@
+import { createBrowserRouter, RouterProvider, Navigate } from "react-router-dom";
+import { AppProvider, useApp } from "@/contexts/AppContext";
+import { ToastProvider } from "@/contexts/ToastContext";
+import { AdminProvider } from "@/contexts/AdminContext";
+import type { ReactNode } from "react";
+
+// Public pages
+import Home from "@/pages/Home";
+import Work from "@/pages/Work";
+import ProjectDetail from "@/pages/ProjectDetail";
+import Services from "@/pages/Services";
+import ServiceCheckout from "@/pages/ServiceCheckout";
+import Studio from "@/pages/Studio";
+import Experiments from "@/pages/Experiments";
+import Process from "@/pages/Process";
+import Journal from "@/pages/Journal";
+import JournalPost from "@/pages/JournalPost";
+import Contact from "@/pages/Contact";
+import BookCall from "@/pages/BookCall";
+import FAQ from "@/pages/FAQ";
+import Privacy from "@/pages/Privacy";
+import Terms from "@/pages/Terms";
+import Refund from "@/pages/Refund";
+import NotFound from "@/pages/NotFound";
+
+// Auth
+import Login from "@/pages/auth/Login";
+
+// Client
+import ClientDashboard from "@/pages/client/Dashboard";
+import ClientProjects from "@/pages/client/Projects";
+import ClientOrders from "@/pages/client/Orders";
+import ClientInvoices from "@/pages/client/Invoices";
+import ClientPayments from "@/pages/client/Payments";
+import ClientAppointments from "@/pages/client/Appointments";
+import ClientMessages from "@/pages/client/Messages";
+
+// Admin
+import AdminDashboard from "@/pages/admin/Dashboard";
+import AdminProjects from "@/pages/admin/Projects";
+import AdminServices from "@/pages/admin/Services";
+import AdminOrders from "@/pages/admin/Orders";
+import AdminBookings from "@/pages/admin/Bookings";
+import AdminCustomers from "@/pages/admin/Customers";
+import AdminInvoices from "@/pages/admin/Invoices";
+import AdminPayments from "@/pages/admin/Payments";
+import AdminMessages from "@/pages/admin/Messages";
+import AdminJournal from "@/pages/admin/Journal";
+import AdminMedia from "@/pages/admin/Media";
+import AdminTestimonials from "@/pages/admin/Testimonials";
+import AdminSettings from "@/pages/admin/Settings";
+import AdminSEO from "@/pages/admin/SEO";
+import AdminAnalytics from "@/pages/admin/Analytics";
+import AdminUsers from "@/pages/admin/Users";
+import AdminNotifications from "@/pages/admin/Notifications";
+import AdminAuditLog from "@/pages/admin/AuditLog";
+import AdminLeads from "@/pages/admin/Leads";
+import AdminRoles from "@/pages/admin/Roles";
+
+function AdminGuard({ children }: { children: ReactNode }) {
+  const { user } = useApp();
+  if (!user) return <Navigate to="/login" replace />;
+  if (user.role !== "admin") return <Navigate to="/client" replace />;
+  return <>{children}</>;
+}
+
+function ClientGuard({ children }: { children: ReactNode }) {
+  const { user } = useApp();
+  if (!user) return <Navigate to="/login" replace />;
+  return <>{children}</>;
+}
+
+function AppRoutes() {
+  return (
+    <RouterProvider router={createBrowserRouter([
+      { path: "/", element: <Home /> },
+      { path: "/work", element: <Work /> },
+      { path: "/work/:slug", element: <ProjectDetail /> },
+      { path: "/services", element: <Services /> },
+      { path: "/checkout", element: <ServiceCheckout /> },
+      { path: "/studio", element: <Studio /> },
+      { path: "/experiments", element: <Experiments /> },
+      { path: "/process", element: <Process /> },
+      { path: "/journal", element: <Journal /> },
+      { path: "/journal/:slug", element: <JournalPost /> },
+      { path: "/contact", element: <Contact /> },
+      { path: "/book", element: <BookCall /> },
+      { path: "/faq", element: <FAQ /> },
+      { path: "/privacy", element: <Privacy /> },
+      { path: "/terms", element: <Terms /> },
+      { path: "/refund", element: <Refund /> },
+      { path: "/login", element: <Login /> },
+
+      // Client portal
+      { path: "/client", element: <ClientGuard><ClientDashboard /></ClientGuard> },
+      { path: "/client/projects", element: <ClientGuard><ClientProjects /></ClientGuard> },
+      { path: "/client/orders", element: <ClientGuard><ClientOrders /></ClientGuard> },
+      { path: "/client/invoices", element: <ClientGuard><ClientInvoices /></ClientGuard> },
+      { path: "/client/payments", element: <ClientGuard><ClientPayments /></ClientGuard> },
+      { path: "/client/appointments", element: <ClientGuard><ClientAppointments /></ClientGuard> },
+      { path: "/client/messages", element: <ClientGuard><ClientMessages /></ClientGuard> },
+
+      // Admin
+      { path: "/admin", element: <AdminGuard><AdminDashboard /></AdminGuard> },
+      { path: "/admin/projects", element: <AdminGuard><AdminProjects /></AdminGuard> },
+      { path: "/admin/services", element: <AdminGuard><AdminServices /></AdminGuard> },
+      { path: "/admin/orders", element: <AdminGuard><AdminOrders /></AdminGuard> },
+      { path: "/admin/bookings", element: <AdminGuard><AdminBookings /></AdminGuard> },
+      { path: "/admin/customers", element: <AdminGuard><AdminCustomers /></AdminGuard> },
+      { path: "/admin/invoices", element: <AdminGuard><AdminInvoices /></AdminGuard> },
+      { path: "/admin/payments", element: <AdminGuard><AdminPayments /></AdminGuard> },
+      { path: "/admin/messages", element: <AdminGuard><AdminMessages /></AdminGuard> },
+      { path: "/admin/journal", element: <AdminGuard><AdminJournal /></AdminGuard> },
+      { path: "/admin/media", element: <AdminGuard><AdminMedia /></AdminGuard> },
+      { path: "/admin/testimonials", element: <AdminGuard><AdminTestimonials /></AdminGuard> },
+      { path: "/admin/settings", element: <AdminGuard><AdminSettings /></AdminGuard> },
+      { path: "/admin/seo", element: <AdminGuard><AdminSEO /></AdminGuard> },
+      { path: "/admin/analytics", element: <AdminGuard><AdminAnalytics /></AdminGuard> },
+      { path: "/admin/users", element: <AdminGuard><AdminUsers /></AdminGuard> },
+      { path: "/admin/notifications", element: <AdminGuard><AdminNotifications /></AdminGuard> },
+      { path: "/admin/audit", element: <AdminGuard><AdminAuditLog /></AdminGuard> },
+      { path: "/admin/leads", element: <AdminGuard><AdminLeads /></AdminGuard> },
+      { path: "/admin/roles", element: <AdminGuard><AdminRoles /></AdminGuard> },
+
+      { path: "*", element: <NotFound /> },
+    ])} />
+  );
+}
+
+export default function App() {
+  return (
+    <AppProvider>
+      <ToastProvider>
+        <AdminProvider>
+          <AppRoutes />
+        </AdminProvider>
+      </ToastProvider>
+    </AppProvider>
+  );
+}

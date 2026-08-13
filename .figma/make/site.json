@@ -1,0 +1,10 @@
+{
+  "description": "A premium digital platform showcasing and managing high-end 3D design, CGI, and motion projects with client booking, service purchasing, and admin tools.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
