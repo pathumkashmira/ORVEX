@@ -1,12 +1,5 @@
-import {
-  createContext,
-  useContext,
-  useState,
-  useCallback,
-  useEffect,
-  type ReactNode,
-} from "react";
-import { CheckCircle, XCircle, AlertTriangle, Info, X } from "lucide-react";
+import { createContext, useContext, useState, useCallback, type ReactNode } from "react";
+import { X, CheckCircle, AlertCircle, AlertTriangle, Info } from "lucide-react";
 
 type ToastType = "success" | "error" | "warning" | "info";
 
@@ -15,76 +8,52 @@ interface Toast {
   type: ToastType;
   title: string;
   message?: string;
-  duration?: number;
 }
 
-interface ToastContextType {
+interface ToastAPI {
+  success: (title: string, message?: string) => void;
+  error: (title: string, message?: string) => void;
+  warning: (title: string, message?: string) => void;
+  info: (title: string, message?: string) => void;
+}
+
+interface ToastCtx {
   toasts: Toast[];
-  toast: {
-    success: (title: string, message?: string) => void;
-    error: (title: string, message?: string) => void;
-    warning: (title: string, message?: string) => void;
-    info: (title: string, message?: string) => void;
-  };
+  toast: ToastAPI;
   dismiss: (id: string) => void;
 }
 
-const ToastContext = createContext<ToastContextType | null>(null);
+const Ctx = createContext<ToastCtx | null>(null);
 
-function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: (id: string) => void }) {
-  useEffect(() => {
-    const t = setTimeout(() => onDismiss(toast.id), toast.duration ?? 4000);
-    return () => clearTimeout(t);
-  }, [toast.id, toast.duration, onDismiss]);
-
-  const icons: Record<ToastType, ReactNode> = {
-    success: <CheckCircle size={15} className="text-[#3fb950] flex-shrink-0" />,
-    error: <XCircle size={15} className="text-[#f85149] flex-shrink-0" />,
-    warning: <AlertTriangle size={15} className="text-[#d29922] flex-shrink-0" />,
-    info: <Info size={15} className="text-[#58a6ff] flex-shrink-0" />,
-  };
-
-  const accents: Record<ToastType, string> = {
-    success: "border-l-[#3fb950]",
-    error: "border-l-[#f85149]",
-    warning: "border-l-[#d29922]",
-    info: "border-l-[#58a6ff]",
-  };
-
-  return (
-    <div
-      className={`admin-toast border-l-2 ${accents[toast.type]}`}
-      role="alert"
-      aria-live="assertive"
-    >
-      <div className="flex items-start gap-3">
-        <div className="mt-[1px]">{icons[toast.type]}</div>
-        <div className="flex-1 min-w-0">
-          <p className="text-[13px] font-semibold text-[#e6edf3] leading-tight">{toast.title}</p>
-          {toast.message && (
-            <p className="text-[12px] text-[#7d8590] mt-0.5 leading-snug">{toast.message}</p>
-          )}
-        </div>
-        <button
-          onClick={() => onDismiss(toast.id)}
-          className="text-[#7d8590] hover:text-[#e6edf3] transition-colors flex-shrink-0 ml-1"
-          aria-label="Dismiss"
-        >
-          <X size={13} />
-        </button>
-      </div>
-    </div>
-  );
-}
+const ICON = { success: CheckCircle, error: AlertCircle, warning: AlertTriangle, info: Info };
+const CLR = {
+  success: { icon: "#3fb950", border: "rgba(63,185,80,0.35)" },
+  error:   { icon: "#f85149", border: "rgba(248,81,73,0.35)" },
+  warning: { icon: "#d29922", border: "rgba(210,153,34,0.35)" },
+  info:    { icon: "#58a6ff", border: "rgba(88,166,255,0.35)" },
+};
 
 export function ToastContainer() {
-  const ctx = useContext(ToastContext);
+  const ctx = useContext(Ctx);
   if (!ctx || ctx.toasts.length === 0) return null;
   return (
-    <div className="admin-toast-container" aria-label="Notifications">
-      {ctx.toasts.map((t) => (
-        <ToastItem key={t.id} toast={t} onDismiss={ctx.dismiss} />
-      ))}
+    <div style={{ position: "fixed", bottom: 20, right: 20, zIndex: 9999, display: "flex", flexDirection: "column-reverse", gap: 8, pointerEvents: "none" }}>
+      {ctx.toasts.map((t) => {
+        const Icon = ICON[t.type];
+        const c = CLR[t.type];
+        return (
+          <div key={t.id} style={{ display: "flex", alignItems: "flex-start", gap: 12, background: "#161b22", border: `1px solid ${c.border}`, borderRadius: 8, padding: "14px 16px", minWidth: 280, maxWidth: 380, boxShadow: "0 8px 24px rgba(0,0,0,0.5)", pointerEvents: "all", animation: "toast-slide 0.25s ease" }}>
+            <Icon size={16} style={{ color: c.icon, flexShrink: 0, marginTop: 1 }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p style={{ fontSize: 13, fontWeight: 600, color: "#e6edf3", margin: 0, lineHeight: 1.4 }}>{t.title}</p>
+              {t.message && <p style={{ fontSize: 12, color: "#7d8590", margin: "3px 0 0", lineHeight: 1.4 }}>{t.message}</p>}
+            </div>
+            <button onClick={() => ctx.dismiss(t.id)} style={{ background: "none", border: "none", color: "#484f58", cursor: "pointer", padding: 2, flexShrink: 0, display: "flex" }}>
+              <X size={14} />
+            </button>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -93,30 +62,27 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const dismiss = useCallback((id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
+    setToasts((p) => p.filter((t) => t.id !== id));
   }, []);
 
   const add = useCallback((type: ToastType, title: string, message?: string) => {
-    const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    setToasts((prev) => [...prev.slice(-4), { id, type, title, message }]);
-  }, []);
+    const id = `t-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    setToasts((p) => [...p, { id, type, title, message }]);
+    setTimeout(() => dismiss(id), 4500);
+  }, [dismiss]);
 
-  const toast = {
-    success: (title: string, message?: string) => add("success", title, message),
-    error: (title: string, message?: string) => add("error", title, message),
-    warning: (title: string, message?: string) => add("warning", title, message),
-    info: (title: string, message?: string) => add("info", title, message),
+  const toast: ToastAPI = {
+    success: (t, m) => add("success", t, m),
+    error:   (t, m) => add("error",   t, m),
+    warning: (t, m) => add("warning", t, m),
+    info:    (t, m) => add("info",    t, m),
   };
 
-  return (
-    <ToastContext.Provider value={{ toasts, toast, dismiss }}>
-      {children}
-    </ToastContext.Provider>
-  );
+  return <Ctx.Provider value={{ toasts, toast, dismiss }}>{children}</Ctx.Provider>;
 }
 
 export function useToast() {
-  const ctx = useContext(ToastContext);
-  if (!ctx) throw new Error("useToast must be used within ToastProvider");
+  const ctx = useContext(Ctx);
+  if (!ctx) throw new Error("useToast must be inside ToastProvider");
   return ctx;
 }

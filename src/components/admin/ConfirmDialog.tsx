@@ -1,91 +1,51 @@
 import { useEffect } from "react";
-import { AlertTriangle, Trash2 } from "lucide-react";
+import { AlertTriangle, X } from "lucide-react";
 
 interface Props {
   open: boolean;
   title: string;
   description: string;
   confirmLabel?: string;
-  cancelLabel?: string;
   destructive?: boolean;
-  loading?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
 
-export default function ConfirmDialog({
-  open,
-  title,
-  description,
-  confirmLabel = "Confirm",
-  cancelLabel = "Cancel",
-  destructive = false,
-  loading = false,
-  onConfirm,
-  onCancel,
-}: Props) {
+export default function ConfirmDialog({ open, title, description, confirmLabel = "Confirm", destructive, onConfirm, onCancel }: Props) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onCancel();
       if (e.key === "Enter") onConfirm();
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onCancel, onConfirm]);
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onConfirm, onCancel]);
 
   if (!open) return null;
 
   return (
-    <div className="admin-dialog-backdrop" onClick={onCancel}>
-      <div
-        className="admin-dialog"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="confirm-title"
-      >
-        <div className="flex items-start gap-4 mb-5">
-          <div
-            className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${
-              destructive ? "bg-[#f85149]/10" : "bg-[#d29922]/10"
-            }`}
-          >
-            {destructive ? (
-              <Trash2 size={16} className="text-[#f85149]" />
-            ) : (
-              <AlertTriangle size={16} className="text-[#d29922]" />
-            )}
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 16px" }} onClick={onCancel}>
+      <div style={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 12, padding: 24, maxWidth: 420, width: "100%", boxShadow: "0 24px 48px rgba(0,0,0,0.6)" }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 20 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 8, background: destructive ? "rgba(248,81,73,0.12)" : "rgba(88,166,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <AlertTriangle size={18} style={{ color: destructive ? "#f85149" : "#58a6ff" }} />
           </div>
-          <div>
-            <h3 id="confirm-title" className="admin-heading-sm mb-1">
-              {title}
-            </h3>
-            <p className="admin-body-sm text-[#7d8590]">{description}</p>
+          <div style={{ flex: 1 }}>
+            <p style={{ fontSize: 15, fontWeight: 600, color: "#e6edf3", margin: "0 0 6px" }}>{title}</p>
+            <p style={{ fontSize: 13, color: "#7d8590", margin: 0, lineHeight: 1.5 }}>{description}</p>
           </div>
-        </div>
-
-        <div className="flex items-center justify-end gap-3">
-          <button
-            onClick={onCancel}
-            disabled={loading}
-            className="admin-btn admin-btn-ghost"
-          >
-            {cancelLabel}
+          <button onClick={onCancel} style={{ background: "none", border: "none", color: "#484f58", cursor: "pointer", padding: 4, display: "flex", flexShrink: 0 }}>
+            <X size={16} />
           </button>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <button className="admin-btn admin-btn-secondary" onClick={onCancel}>Cancel</button>
           <button
-            onClick={onConfirm}
-            disabled={loading}
             className={`admin-btn ${destructive ? "admin-btn-danger" : "admin-btn-primary"}`}
+            onClick={onConfirm}
           >
-            {loading ? (
-              <span className="flex items-center gap-2">
-                <span className="admin-spinner" />
-                Processing...
-              </span>
-            ) : (
-              confirmLabel
-            )}
+            {confirmLabel}
           </button>
         </div>
       </div>

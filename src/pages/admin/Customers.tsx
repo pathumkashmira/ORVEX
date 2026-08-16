@@ -1,473 +1,295 @@
 import { useState, useMemo } from "react";
-import { Plus, Edit2, Eye, Users, DollarSign, TrendingUp, Activity } from "lucide-react";
+import { Search, Plus, Edit2, Trash2 } from "lucide-react";
 import AdminLayout from "@/components/AdminLayout";
-import { useAdmin } from "@/contexts/AdminContext";
+import { useAdmin, type Customer } from "@/contexts/AdminContext";
 import { useToast } from "@/contexts/ToastContext";
+import ConfirmDialog from "@/components/admin/ConfirmDialog";
 import SlideOver from "@/components/admin/SlideOver";
-import DataTable, { type Column } from "@/components/admin/DataTable";
-import type { Customer } from "@/data/seed";
 
-function fmt(n: number) {
-  return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
-}
+const genId = () => Date.now().toString() + Math.random().toString(36).slice(2, 7);
 
-function fmtDate(s: string) {
-  try {
-    return new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-  } catch {
-    return s;
-  }
-}
+const LEAD_STATUSES: Customer["leadStatus"][] = ["new", "contacted", "qualified", "proposal_sent", "won", "lost"];
 
-const LEAD_STATUSES = ["new", "contacted", "qualified", "proposal_sent", "won", "lost"] as const;
-type LeadStatus = (typeof LEAD_STATUSES)[number];
-
-const leadBadge: Record<LeadStatus, string> = {
-  new: "admin-badge-blue",
-  contacted: "admin-badge-yellow",
-  qualified: "admin-badge-orange",
-  proposal_sent: "admin-badge-blue",
-  won: "admin-badge-green",
-  lost: "admin-badge-gray",
+const EMPTY_FORM = {
+  name: "",
+  email: "",
+  company: "",
+  phone: "",
+  country: "",
+  leadStatus: "new" as Customer["leadStatus"],
 };
 
-function fmtLabel(s: string) {
-  return s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-}
+type FormState = typeof EMPTY_FORM;
 
-function initials(name: string) {
-  return name
-    .split(" ")
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
-}
-
-const AVATAR_COLORS = [
-  "bg-[#ff5a00]/20 text-[#ff5a00]",
-  "bg-[#238636]/20 text-[#3fb950]",
-  "bg-[#1f6feb]/20 text-[#58a6ff]",
-  "bg-[#9e6a03]/20 text-[#d29922]",
-  "bg-[#8957e5]/20 text-[#bc8cff]",
-];
-
-function avatarColor(name: string) {
-  let h = 0;
-  for (const c of name) h = (h * 31 + c.charCodeAt(0)) & 0xffff;
-  return AVATAR_COLORS[h % AVATAR_COLORS.length];
-}
-
-interface CustomerFormState {
-  name: string;
-  company: string;
-  email: string;
-  phone: string;
-  country: string;
-  leadStatus: LeadStatus;
-}
-
-function emptyForm(): CustomerFormState {
-  return { name: "", company: "", email: "", phone: "", country: "", leadStatus: "new" };
-}
-
-function fromCustomer(c: Customer): CustomerFormState {
-  return {
-    name: c.name,
-    company: c.company ?? "",
-    email: c.email,
-    phone: c.phone ?? "",
-    country: c.country ?? "",
-    leadStatus: (c.leadStatus as LeadStatus) ?? "new",
+function leadBadge(s: Customer["leadStatus"]) {
+  const map: Record<Customer["leadStatus"], string> = {
+    new: "admin-badge-blue",
+    contacted: "admin-badge-yellow",
+    qualified: "admin-badge-orange",
+    proposal_sent: "admin-badge-purple",
+    won: "admin-badge-green",
+    lost: "admin-badge-red",
   };
+  const label = s.replace("_", " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  return <span className={`admin-badge ${map[s]}`}>{label}</span>;
 }
 
-interface CustomerSlideOverProps {
-  customer: Customer | null;
-  mode: "view" | "edit" | "add";
-  onClose: () => void;
+function formatCurrency(n: number) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
 }
 
-function CustomerSlideOver({ customer, mode, onClose }: CustomerSlideOverProps) {
-  const { orders, customers_ } = useAdmin();
+function formatDate(d: string) {
+  if (!d) return "—";
+  return new Date(d).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+}
+
+export default function AdminCustomers() {
+  const { customers, customers_ } = useAdmin();
   const { toast } = useToast();
-  const [form, setForm] = useState<CustomerFormState>(
-    customer && mode !== "add" ? fromCustomer(customer) : emptyForm()
-  );
-  const [activeTab, setActiveTab] = useState<"info" | "orders">("info");
 
-  const customerOrders = useMemo(
-    () => (customer ? orders.filter((o) => o.email === customer.email) : []),
-    [orders, customer]
-  );
+  const [search, setSearch] = useState("");
+  const [leadFilter, setLeadFilter] = useState<"all" | Customer["leadStatus"]>("all");
+  const [sortCol, setSortCol] = useState<"totalSpent" | "name">("totalSpent");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<Customer | null>(null);
+  const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [confirmDelete, setConfirmDelete] = useState<{ open: boolean; id: string; name: string }>({ open: false, id: "", name: "" });
 
-  const set = (k: keyof CustomerFormState, v: string) => setForm((f) => ({ ...f, [k]: v }));
-
-  const handleSave = () => {
-    if (!form.name || !form.email) {
-      toast.error("Name and email are required");
-      return;
+  const filtered = useMemo(() => {
+    let list = [...customers];
+    if (leadFilter !== "all") list = list.filter((c) => c.leadStatus === leadFilter);
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      list = list.filter(
+        (c) =>
+          c.name.toLowerCase().includes(q) ||
+          c.email.toLowerCase().includes(q) ||
+          c.company.toLowerCase().includes(q) ||
+          c.country.toLowerCase().includes(q)
+      );
     }
-    if (mode === "add") {
-      customers_.create({
-        id: Date.now().toString(),
-        name: form.name,
-        company: form.company,
-        email: form.email,
-        phone: form.phone,
-        country: form.country,
-        leadStatus: form.leadStatus,
+    list.sort((a, b) => {
+      if (sortCol === "totalSpent") return sortDir === "asc" ? a.totalSpent - b.totalSpent : b.totalSpent - a.totalSpent;
+      return sortDir === "asc" ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name);
+    });
+    return list;
+  }, [customers, search, leadFilter, sortCol, sortDir]);
+
+  function handleSort(col: "totalSpent" | "name") {
+    if (sortCol === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortCol(col); setSortDir("desc"); }
+  }
+
+  function sortIcon(col: "totalSpent" | "name") {
+    return sortCol === col ? (sortDir === "asc" ? " ↑" : " ↓") : "";
+  }
+
+  function openCreate() {
+    setEditing(null);
+    setForm(EMPTY_FORM);
+    setShowForm(true);
+  }
+
+  function openEdit(c: Customer) {
+    setEditing(c);
+    setForm({ name: c.name, email: c.email, company: c.company, phone: c.phone, country: c.country, leadStatus: c.leadStatus });
+    setShowForm(true);
+  }
+
+  function setField<K extends keyof FormState>(key: K, value: FormState[K]) {
+    setForm((f) => ({ ...f, [key]: value }));
+  }
+
+  function handleSave() {
+    if (!form.name.trim()) { toast.error("Name is required"); return; }
+    if (!form.email.trim()) { toast.error("Email is required"); return; }
+    if (editing) {
+      customers_.edit(editing.id, { ...form });
+      toast.success("Customer updated");
+    } else {
+      const item: Customer = {
+        id: genId(),
+        ...form,
         totalSpent: 0,
         projects: 0,
         orders: 0,
         bookings: 0,
         lastActivity: new Date().toISOString().slice(0, 10),
         createdAt: new Date().toISOString().slice(0, 10),
-      } as Customer);
+      };
+      customers_.add(item);
       toast.success("Customer created");
-    } else if (customer) {
-      customers_.update({
-        ...customer,
-        name: form.name,
-        company: form.company,
-        email: form.email,
-        phone: form.phone,
-        country: form.country,
-        leadStatus: form.leadStatus,
-      } as Customer);
-      toast.success("Customer updated");
     }
-    onClose();
-  };
+    setShowForm(false);
+  }
 
-  const title = mode === "add" ? "Add Customer" : mode === "edit" ? `Edit — ${customer?.name}` : customer?.name ?? "";
-
-  return (
-    <SlideOver
-      open
-      onClose={onClose}
-      title={title}
-      subtitle={mode === "view" ? customer?.company : undefined}
-      width="lg"
-      footer={
-        mode !== "view" ? (
-          <>
-            <button className="admin-btn admin-btn-ghost" onClick={onClose}>Cancel</button>
-            <button className="admin-btn admin-btn-primary" onClick={handleSave}>
-              {mode === "add" ? "Create Customer" : "Save Changes"}
-            </button>
-          </>
-        ) : undefined
-      }
-    >
-      {mode === "view" && customer ? (
-        <div className="space-y-6">
-          {/* Avatar + stats */}
-          <div className="flex items-center gap-4">
-            <div className={`w-14 h-14 rounded-full flex items-center justify-center font-bold text-lg flex-shrink-0 ${avatarColor(customer.name)}`}>
-              {initials(customer.name)}
-            </div>
-            <div>
-              <p className="text-[#e6edf3] font-semibold">{customer.name}</p>
-              <p className="text-[#7d8590] text-sm">{customer.company}</p>
-              <p className="text-[#7d8590] text-xs">{customer.email}</p>
-            </div>
-          </div>
-
-          {/* Tab bar */}
-          <div className="flex gap-1 border-b border-[#30363d] pb-0">
-            {(["info", "orders"] as const).map((t) => (
-              <button
-                key={t}
-                onClick={() => setActiveTab(t)}
-                className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
-                  activeTab === t
-                    ? "border-[#ff5a00] text-[#ff5a00]"
-                    : "border-transparent text-[#7d8590] hover:text-[#e6edf3]"
-                }`}
-              >
-                {t === "info" ? "Contact Info" : `Orders (${customerOrders.length})`}
-              </button>
-            ))}
-          </div>
-
-          {activeTab === "info" && (
-            <div className="admin-card grid grid-cols-2 gap-x-6 gap-y-3">
-              {[
-                ["Phone", customer.phone],
-                ["Country", customer.country],
-                ["Total Spent", fmt(customer.totalSpent ?? 0)],
-                ["Orders", String(customer.orders ?? 0)],
-                ["Projects", String(customer.projects ?? 0)],
-                ["Lead Status", <span className={`admin-badge ${leadBadge[(customer.leadStatus as LeadStatus) ?? "new"]}`}>{fmtLabel(customer.leadStatus ?? "new")}</span>],
-                ["Last Activity", fmtDate(customer.lastActivity ?? "")],
-                ["Member Since", fmtDate(customer.createdAt)],
-              ].map(([label, val]) => (
-                <div key={String(label)}>
-                  <p className="text-[#7d8590] text-xs mb-0.5">{label}</p>
-                  <p className="text-[#e6edf3] text-sm">{val}</p>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {activeTab === "orders" && (
-            <div className="space-y-2">
-              {customerOrders.length === 0 ? (
-                <p className="text-[#7d8590] text-sm text-center py-8">No orders found for this customer.</p>
-              ) : (
-                customerOrders.map((o) => (
-                  <div key={o.id} className="admin-card flex items-center justify-between gap-4">
-                    <div>
-                      <p className="font-mono text-xs text-[#ff5a00]">{o.orderId}</p>
-                      <p className="text-[#7d8590] text-xs">{o.service} — {o.package}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-[#e6edf3] font-semibold text-sm">${o.amount.toLocaleString()}</p>
-                      <p className="text-[#7d8590] text-xs">{fmtDate(o.createdAt)}</p>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          )}
-        </div>
-      ) : (
-        /* Edit / Add form */
-        <div className="space-y-4">
-          {[
-            { label: "Full Name", key: "name" as const, placeholder: "Jane Smith" },
-            { label: "Company", key: "company" as const, placeholder: "Acme Studio" },
-            { label: "Email", key: "email" as const, placeholder: "jane@acme.com" },
-            { label: "Phone", key: "phone" as const, placeholder: "+1 555 0100" },
-            { label: "Country", key: "country" as const, placeholder: "United States" },
-          ].map(({ label, key, placeholder }) => (
-            <div className="admin-field" key={key}>
-              <label className="admin-field-label">{label}</label>
-              <input
-                className="admin-input w-full"
-                placeholder={placeholder}
-                value={form[key]}
-                onChange={(e) => set(key, e.target.value)}
-              />
-            </div>
-          ))}
-          <div className="admin-field">
-            <label className="admin-field-label">Lead Status</label>
-            <select className="admin-select w-full" value={form.leadStatus} onChange={(e) => set("leadStatus", e.target.value)}>
-              {LEAD_STATUSES.map((s) => (
-                <option key={s} value={s}>{fmtLabel(s)}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-      )}
-    </SlideOver>
-  );
-}
-
-export default function Customers() {
-  const { customers } = useAdmin();
-  const [search, setSearch] = useState("");
-  const [leadFilter, setLeadFilter] = useState("ALL");
-  const [countryFilter, setCountryFilter] = useState("ALL");
-  const [slideOver, setSlideOver] = useState<{ customer: Customer | null; mode: "view" | "edit" | "add" } | null>(null);
-
-  const countries = useMemo(() => {
-    const set = new Set<string>();
-    customers.forEach((c) => { if (c.country) set.add(c.country); });
-    return Array.from(set).sort();
-  }, [customers]);
-
-  const totalRevenue = useMemo(() => customers.reduce((s, c) => s + (c.totalSpent ?? 0), 0), [customers]);
-  const wonCount = useMemo(() => customers.filter((c) => c.leadStatus === "won").length, [customers]);
-  const activeLeads = useMemo(
-    () => customers.filter((c) => c.leadStatus !== "won" && c.leadStatus !== "lost").length,
-    [customers]
-  );
-
-  const filtered = useMemo(() => {
-    return customers.filter((c) => {
-      const q = search.toLowerCase();
-      const matchSearch = !q || c.name.toLowerCase().includes(q) || (c.company ?? "").toLowerCase().includes(q) || c.email.toLowerCase().includes(q);
-      const matchLead = leadFilter === "ALL" || c.leadStatus === leadFilter;
-      const matchCountry = countryFilter === "ALL" || c.country === countryFilter;
-      return matchSearch && matchLead && matchCountry;
-    });
-  }, [customers, search, leadFilter, countryFilter]);
-
-  const columns: Column<Customer>[] = [
-    {
-      key: "name",
-      label: "Customer",
-      sortable: true,
-      render: (row) => (
-        <div className="flex items-center gap-3">
-          <div className={`w-8 h-8 rounded-full flex items-center justify-center font-semibold text-xs flex-shrink-0 ${avatarColor(row.name)}`}>
-            {initials(row.name)}
-          </div>
-          <div>
-            <p className="text-[#e6edf3] text-sm font-medium leading-tight">{row.name}</p>
-            <p className="text-[#7d8590] text-xs">{row.company}</p>
-          </div>
-        </div>
-      ),
-    },
-    {
-      key: "email",
-      label: "Email",
-      sortable: true,
-      render: (row) => <span className="text-[#7d8590] text-sm">{row.email}</span>,
-    },
-    {
-      key: "country",
-      label: "Country",
-      sortable: true,
-      width: "120px",
-      render: (row) => <span className="text-[#e6edf3] text-sm">{row.country ?? "—"}</span>,
-    },
-    {
-      key: "totalSpent",
-      label: "Spent",
-      sortable: true,
-      width: "100px",
-      render: (row) => <span className="text-[#e6edf3] font-semibold text-sm">{fmt(row.totalSpent ?? 0)}</span>,
-    },
-    {
-      key: "orders",
-      label: "Orders",
-      sortable: true,
-      width: "80px",
-      render: (row) => <span className="text-[#e6edf3] text-sm">{row.orders ?? 0}</span>,
-    },
-    {
-      key: "projects",
-      label: "Projects",
-      sortable: true,
-      width: "85px",
-      render: (row) => <span className="text-[#e6edf3] text-sm">{row.projects ?? 0}</span>,
-    },
-    {
-      key: "leadStatus",
-      label: "Lead Status",
-      sortable: true,
-      width: "130px",
-      render: (row) => (
-        <span className={`admin-badge ${leadBadge[(row.leadStatus as LeadStatus) ?? "new"]}`}>
-          {fmtLabel(row.leadStatus ?? "new")}
-        </span>
-      ),
-    },
-    {
-      key: "lastActivity",
-      label: "Last Activity",
-      sortable: true,
-      width: "120px",
-      render: (row) => <span className="text-[#7d8590] text-xs">{fmtDate(row.lastActivity ?? "")}</span>,
-    },
-    {
-      key: "_actions",
-      label: "Actions",
-      width: "100px",
-      render: (row) => (
-        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-          <button
-            className="admin-btn admin-btn-sm admin-btn-ghost"
-            title="Edit"
-            onClick={() => setSlideOver({ customer: row, mode: "edit" })}
-          >
-            <Edit2 size={13} />
-          </button>
-          <button
-            className="admin-btn admin-btn-sm admin-btn-ghost"
-            title="View"
-            onClick={() => setSlideOver({ customer: row, mode: "view" })}
-          >
-            <Eye size={13} />
-          </button>
-        </div>
-      ),
-    },
-  ];
+  function handleDelete() {
+    customers_.del(confirmDelete.id);
+    toast.success(`Customer "${confirmDelete.name}" deleted`);
+    setConfirmDelete({ open: false, id: "", name: "" });
+  }
 
   return (
     <AdminLayout>
       <div className="admin-page">
-        {/* Header */}
         <div className="admin-page-header">
-          <div className="flex items-center gap-3">
+          <div>
             <h1 className="admin-heading">Customers</h1>
-            <span className="admin-badge admin-badge-gray">{customers.length}</span>
+            <p style={{ color: "#7d8590", fontSize: 13, margin: 0 }}>
+              {filtered.length} of {customers.length} customers
+            </p>
           </div>
-          <button className="admin-btn admin-btn-primary" onClick={() => setSlideOver({ customer: null, mode: "add" })}>
-            <Plus size={15} />
-            Add Customer
+          <button className="admin-btn admin-btn-primary" onClick={openCreate}>
+            <Plus size={14} style={{ marginRight: 6 }} />
+            New Customer
           </button>
         </div>
 
-        {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {[
-            { icon: <Users size={16} className="text-[#58a6ff]" />, bg: "bg-[#1f6feb]/15", label: "Total Customers", value: String(customers.length) },
-            { icon: <DollarSign size={16} className="text-[#3fb950]" />, bg: "bg-[#238636]/15", label: "Total Revenue", value: fmt(totalRevenue) },
-            { icon: <TrendingUp size={16} className="text-[#ff5a00]" />, bg: "bg-[#ff5a00]/10", label: "Won Customers", value: String(wonCount) },
-            { icon: <Activity size={16} className="text-[#d29922]" />, bg: "bg-[#d29922]/10", label: "Active Leads", value: String(activeLeads) },
-          ].map((stat) => (
-            <div key={stat.label} className="admin-stat-card flex items-center gap-3">
-              <div className={`w-9 h-9 rounded-full ${stat.bg} flex items-center justify-center flex-shrink-0`}>
-                {stat.icon}
-              </div>
-              <div>
-                <p className="text-[#7d8590] text-xs">{stat.label}</p>
-                <p className="text-[#e6edf3] font-semibold">{stat.value}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Filter bar */}
-        <div className="admin-filter-bar flex-wrap gap-3">
-          <div className="admin-search">
-            <svg className="admin-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
-            </svg>
+        <div className="admin-filter-bar">
+          <div style={{ position: "relative" }}>
+            <span className="admin-search-icon">
+              <Search size={14} />
+            </span>
             <input
-              className="admin-input pl-9 w-60"
-              placeholder="Search name, company or email…"
+              className="admin-search"
+              placeholder="Search customers…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
-          <select className="admin-select" value={leadFilter} onChange={(e) => setLeadFilter(e.target.value)}>
-            <option value="ALL">All Statuses</option>
+          <select
+            className="admin-select"
+            style={{ maxWidth: 180 }}
+            value={leadFilter}
+            onChange={(e) => setLeadFilter(e.target.value as typeof leadFilter)}
+          >
+            <option value="all">All Lead Statuses</option>
             {LEAD_STATUSES.map((s) => (
-              <option key={s} value={s}>{fmtLabel(s)}</option>
-            ))}
-          </select>
-          <select className="admin-select" value={countryFilter} onChange={(e) => setCountryFilter(e.target.value)}>
-            <option value="ALL">All Countries</option>
-            {countries.map((c) => (
-              <option key={c} value={c}>{c}</option>
+              <option key={s} value={s}>{s.replace("_", " ").replace(/\b\w/g, (c) => c.toUpperCase())}</option>
             ))}
           </select>
         </div>
 
-        <DataTable
-          data={filtered}
-          columns={columns}
-          emptyMessage="No customers match your filters."
-          emptyIcon={<Users size={32} />}
-          onRowClick={(row) => setSlideOver({ customer: row, mode: "view" })}
-        />
+        <div className="admin-card admin-table-wrap">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th style={{ cursor: "pointer" }} onClick={() => handleSort("name")}>Name{sortIcon("name")}</th>
+                <th>Company</th>
+                <th>Email</th>
+                <th>Country</th>
+                <th style={{ cursor: "pointer" }} onClick={() => handleSort("totalSpent")}>Total Spent{sortIcon("totalSpent")}</th>
+                <th>Orders</th>
+                <th>Lead Status</th>
+                <th>Last Activity</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.length === 0 && (
+                <tr>
+                  <td colSpan={9}>
+                    <div className="admin-empty">No customers found</div>
+                  </td>
+                </tr>
+              )}
+              {filtered.map((c) => (
+                <tr key={c.id}>
+                  <td>
+                    <div style={{ fontWeight: 600, color: "#e6edf3" }}>{c.name}</div>
+                    <div style={{ fontSize: 12, color: "#7d8590" }}>{c.phone}</div>
+                  </td>
+                  <td style={{ color: "#c9d1d9", fontSize: 13 }}>{c.company || "—"}</td>
+                  <td style={{ fontSize: 12, color: "#7d8590" }}>{c.email}</td>
+                  <td style={{ fontSize: 13, color: "#c9d1d9" }}>{c.country || "—"}</td>
+                  <td style={{ fontWeight: 700, color: "#e6edf3" }}>{formatCurrency(c.totalSpent)}</td>
+                  <td style={{ color: "#7d8590", textAlign: "center" }}>{c.orders}</td>
+                  <td>{leadBadge(c.leadStatus)}</td>
+                  <td style={{ fontSize: 12, color: "#7d8590", whiteSpace: "nowrap" }}>{formatDate(c.lastActivity)}</td>
+                  <td>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button className="admin-btn admin-btn-secondary admin-btn-sm" onClick={() => openEdit(c)} title="Edit">
+                        <Edit2 size={12} />
+                      </button>
+                      <button
+                        className="admin-btn admin-btn-danger admin-btn-sm"
+                        onClick={() => setConfirmDelete({ open: true, id: c.id, name: c.name })}
+                        title="Delete"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      {slideOver && (
-        <CustomerSlideOver
-          customer={slideOver.customer}
-          mode={slideOver.mode}
-          onClose={() => setSlideOver(null)}
-        />
-      )}
+      <SlideOver
+        open={showForm}
+        onClose={() => setShowForm(false)}
+        title={editing ? "Edit Customer" : "New Customer"}
+        subtitle={editing ? editing.email : "Add a new customer"}
+        width="lg"
+        footer={
+          <>
+            <button className="admin-btn admin-btn-ghost" onClick={() => setShowForm(false)}>Cancel</button>
+            <button className="admin-btn admin-btn-primary" onClick={handleSave}>
+              {editing ? "Save Changes" : "Create Customer"}
+            </button>
+          </>
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          <div className="admin-form-grid">
+            <div className="admin-field">
+              <label className="admin-field-label">Name *</label>
+              <input className="admin-input" value={form.name} onChange={(e) => setField("name", e.target.value)} placeholder="Full name" />
+            </div>
+            <div className="admin-field">
+              <label className="admin-field-label">Email *</label>
+              <input className="admin-input" type="email" value={form.email} onChange={(e) => setField("email", e.target.value)} placeholder="email@example.com" />
+            </div>
+          </div>
+          <div className="admin-form-grid">
+            <div className="admin-field">
+              <label className="admin-field-label">Company</label>
+              <input className="admin-input" value={form.company} onChange={(e) => setField("company", e.target.value)} placeholder="Company name" />
+            </div>
+            <div className="admin-field">
+              <label className="admin-field-label">Phone</label>
+              <input className="admin-input" value={form.phone} onChange={(e) => setField("phone", e.target.value)} placeholder="+1 555 000 0000" />
+            </div>
+          </div>
+          <div className="admin-form-grid">
+            <div className="admin-field">
+              <label className="admin-field-label">Country</label>
+              <input className="admin-input" value={form.country} onChange={(e) => setField("country", e.target.value)} placeholder="e.g. United States" />
+            </div>
+            <div className="admin-field">
+              <label className="admin-field-label">Lead Status</label>
+              <select className="admin-select" value={form.leadStatus} onChange={(e) => setField("leadStatus", e.target.value as Customer["leadStatus"])}>
+                {LEAD_STATUSES.map((s) => (
+                  <option key={s} value={s}>{s.replace("_", " ").replace(/\b\w/g, (c) => c.toUpperCase())}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+      </SlideOver>
+
+      <ConfirmDialog
+        open={confirmDelete.open}
+        title="Delete Customer"
+        description={`Are you sure you want to delete customer "${confirmDelete.name}"? This action cannot be undone.`}
+        confirmLabel="Delete"
+        destructive
+        onConfirm={handleDelete}
+        onCancel={() => setConfirmDelete({ open: false, id: "", name: "" })}
+      />
     </AdminLayout>
   );
 }

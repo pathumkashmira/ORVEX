@@ -1,8 +1,11 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import Layout from "@/components/Layout";
 import { projects, type Project } from "@/data/seed";
 import { useApp } from "@/contexts/AppContext";
+import TextMaskReveal from "@/components/motion/TextMaskReveal";
+import MagneticButton from "@/components/motion/MagneticButton";
+import { useInView } from "@/motion/useInView";
 
 const CATEGORIES = ["ALL", ...Array.from(new Set(projects.map((p) => p.category)))];
 
@@ -11,6 +14,25 @@ export default function Work() {
   const { setCursorMode } = useApp();
   const [filter, setFilter] = useState("ALL");
   const [transitioning, setTransitioning] = useState(false);
+  const [headerRef, headerInView] = useInView<HTMLHeadingElement>({ threshold: 0.1 });
+
+  // Reveal items as they enter viewport
+  useEffect(() => {
+    const els = document.querySelectorAll<HTMLElement>(".reveal, .reveal-slow");
+    const obs = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((e) => {
+          if (e.isIntersecting) {
+            (e.target as HTMLElement).classList.add("visible");
+            obs.unobserve(e.target);
+          }
+        });
+      },
+      { threshold: 0.08 }
+    );
+    els.forEach((el) => obs.observe(el));
+    return () => obs.disconnect();
+  }, []);
 
   const handleProjectClick = useCallback(
     (slug: string) => {
@@ -59,6 +81,7 @@ export default function Work() {
                 ORVEX — SELECTED WORK
               </p>
               <h1
+                ref={headerRef}
                 style={{
                   fontFamily: "'Space Grotesk', sans-serif",
                   fontWeight: 700,
@@ -68,7 +91,12 @@ export default function Work() {
                   color: "#f5f7f8",
                 }}
               >
-                WORK
+                <TextMaskReveal
+                  text="WORK"
+                  externalInView={headerInView}
+                  delay={0.05}
+                  wordDelay={0}
+                />
               </h1>
             </div>
 
@@ -195,9 +223,11 @@ export default function Work() {
           >
             ALL WORK © ORVEX STUDIO 2026
           </p>
-          <a href="/contact" className="btn-primary text-xs py-3 px-7">
-            START A PROJECT
-          </a>
+          <MagneticButton strength={0.3}>
+            <a href="/contact" className="btn-primary text-xs py-3 px-7">
+              START A PROJECT
+            </a>
+          </MagneticButton>
         </div>
       </div>
     </Layout>

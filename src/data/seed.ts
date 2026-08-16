@@ -92,6 +92,16 @@ export interface Booking {
   status: "pending" | "confirmed" | "rescheduled" | "completed" | "cancelled" | "no_show";
   notes: string;
   createdAt: string;
+  // Extended fields for booking engine
+  serviceId?: string;
+  serviceName?: string;
+  appointmentTypeId?: string;
+  duration?: number;
+  endTime?: string;
+  projectDetails?: string;
+  timezone?: string;
+  rescheduleHistory?: Array<{ date: string; time: string; changedAt: string; reason: string }>;
+  notificationLog?: Array<{ type: string; sentAt: string }>;
 }
 
 export interface Order {
@@ -99,13 +109,31 @@ export interface Order {
   orderId: string;
   customer: string;
   email: string;
+  phone?: string;
+  company?: string;
   service: string;
+  serviceId?: string;
   package: string;
+  packageId?: string;
   amount: number;
   deposit: number;
   paymentStatus: "pending" | "processing" | "paid" | "partially_paid" | "failed" | "refunded" | "cancelled";
   projectStatus: string;
   createdAt: string;
+  // Purchase flow extensions
+  paymentType?: "full" | "deposit" | "quote";
+  paymentMethod?: "card" | "bank_transfer" | "crypto";
+  transactionId?: string;
+  providerRef?: string;
+  addons?: string[];
+  addonTotal?: number;
+  customRequirements?: Record<string, string>;
+  attachments?: string[];
+  preferredStartDate?: string;
+  timelineUrgency?: "standard" | "expedited" | "rush";
+  notes?: string;
+  quoteStatus?: "pending" | "sent" | "accepted" | "declined";
+  projectId?: string;
 }
 
 export interface Customer {

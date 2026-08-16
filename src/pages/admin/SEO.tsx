@@ -1,211 +1,214 @@
 import { useState } from "react";
+import { Save, Eye, EyeOff } from "lucide-react";
 import AdminLayout from "@/components/AdminLayout";
 import { useAdmin } from "@/contexts/AdminContext";
 import { useToast } from "@/contexts/ToastContext";
 import type { SEOSettings } from "@/contexts/AdminContext";
 
-const DEFAULTS: SEOSettings = {
-  siteName: "ORVEX",
-  siteDescription: "Premium 3D design, CGI, and motion studio. Form. Motion. Beyond.",
-  siteUrl: "https://orvex.studio",
-  ogImage: "https://images.unsplash.com/photo-1614730321146-b6fa6a46bcb4?w=1200&h=630&fit=crop&auto=format",
-  twitterHandle: "@orvexstudio",
-  googleAnalyticsId: "G-XXXXXXXXXX",
-  robots: "index,follow",
-};
-
-function CharCount({ value, max }: { value: string; max: number }) {
-  const len = value.length;
-  const warn = len > max;
+function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
   return (
-    <span className={`text-xs ${warn ? "text-[#f85149]" : "text-[#7d8590]"}`}>
-      {len}/{max}
+    <button
+      type="button"
+      onClick={() => onChange(!value)}
+      style={{
+        position: "relative",
+        width: 44,
+        height: 24,
+        borderRadius: 12,
+        border: "none",
+        cursor: "pointer",
+        background: value ? "#3fb950" : "#30363d",
+        transition: "background 0.2s",
+        flexShrink: 0,
+      }}
+    >
+      <span
+        style={{
+          position: "absolute",
+          top: 3,
+          left: value ? 23 : 3,
+          width: 18,
+          height: 18,
+          borderRadius: "50%",
+          background: "#fff",
+          transition: "left 0.2s",
+        }}
+      />
+    </button>
+  );
+}
+
+function CharCount({ value, limit, label }: { value: string; limit: number; label: string }) {
+  const len = value.length;
+  const ok = len <= limit;
+  return (
+    <span style={{ fontSize: 11, color: ok ? "#484f58" : "#f85149", marginLeft: 8 }}>
+      {len}/{limit} {label}
     </span>
   );
 }
 
 export default function AdminSEO() {
-  const { seo, updateSEO } = useAdmin();
-  const { toast } = useToast();
-  const [form, setForm] = useState<SEOSettings>({ ...seo });
+  const ctx = useAdmin();
+  const { toast } = useToast(); const success = toast.success;
+  const [form, setForm] = useState<SEOSettings>({ ...ctx.seo });
+  const [imgError, setImgError] = useState(false);
 
   const set = <K extends keyof SEOSettings>(k: K, v: SEOSettings[K]) =>
-    setForm((prev) => ({ ...prev, [k]: v }));
+    setForm((f) => ({ ...f, [k]: v }));
 
   const handleSave = () => {
-    updateSEO(form);
-    toast.success("SEO settings saved");
+    ctx.updateSEO(form);
+    success("SEO settings saved.");
   };
 
-  const handleReset = () => {
-    setForm({ ...DEFAULTS });
-    toast.info("Form reset to defaults");
-  };
-
-  // Google SERP preview values
-  const previewTitle = form.siteName ? `${form.siteName} — ${form.siteDescription.slice(0, 30)}` : "Page Title";
-  const previewUrl = form.siteUrl || "https://example.com";
-  const previewDesc = form.siteDescription.slice(0, 160) || "Page description will appear here.";
+  const previewUrl = form.ogImage.trim();
 
   return (
     <AdminLayout>
-      <div className="admin-page" style={{ maxWidth: 800 }}>
-        {/* Header */}
+      <div className="admin-page" style={{ maxWidth: 860 }}>
         <div className="admin-page-header">
           <div>
+            <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.1em", color: "#484f58", textTransform: "uppercase", marginBottom: 4 }}>SYSTEM</p>
             <h1 className="admin-heading">SEO Settings</h1>
-            <p className="text-sm text-[#7d8590] mt-1">Control how ORVEX appears in search results</p>
           </div>
-          <div className="flex items-center gap-3">
-            <button className="admin-btn admin-btn-ghost" onClick={handleReset}>
-              Reset to Defaults
-            </button>
-            <button className="admin-btn admin-btn-primary" onClick={handleSave}>
-              Save Changes
-            </button>
-          </div>
+          <button className="admin-btn admin-btn-primary" onClick={handleSave}>
+            <Save size={14} /> Save Changes
+          </button>
         </div>
 
-        <div className="space-y-6">
-          {/* Site Identity */}
-          <div className="admin-card">
-            <h2 className="admin-heading-sm mb-5">Site Identity</h2>
-            <div className="space-y-4">
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          {/* Site Title */}
+          <div className="admin-card" style={{ padding: 24 }}>
+            <p style={{ fontSize: 11, fontWeight: 600, color: "#484f58", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 16 }}>
+              Basic Meta
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               <div className="admin-field">
-                <label className="admin-field-label">Site Name</label>
+                <label className="admin-field-label" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  Site Title
+                  <CharCount value={form.siteTitle} limit={60} label="chars (rec. ≤60)" />
+                </label>
                 <input
                   className="admin-input"
-                  value={form.siteName}
-                  onChange={(e) => set("siteName", e.target.value)}
-                  placeholder="ORVEX"
+                  value={form.siteTitle}
+                  onChange={(e) => set("siteTitle", e.target.value)}
+                  placeholder="ORVEX — Premium 3D & CGI Studio"
                 />
+                {form.siteTitle.length > 60 && (
+                  <p style={{ fontSize: 11, color: "#f85149", marginTop: 4 }}>Title exceeds recommended 60 characters. Search engines may truncate it.</p>
+                )}
               </div>
 
               <div className="admin-field">
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="admin-field-label">Site Description</label>
-                  <CharCount value={form.siteDescription} max={160} />
-                </div>
+                <label className="admin-field-label" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  Site Description
+                  <CharCount value={form.siteDescription} limit={160} label="chars (rec. ≤160)" />
+                </label>
                 <textarea
                   className="admin-input admin-textarea"
+                  rows={3}
                   value={form.siteDescription}
                   onChange={(e) => set("siteDescription", e.target.value)}
-                  placeholder="Short description shown in search results (max 160 chars)"
-                  rows={3}
+                  placeholder="Describe your site in 1–2 sentences for search engines."
                 />
+                {form.siteDescription.length > 160 && (
+                  <p style={{ fontSize: 11, color: "#f85149", marginTop: 4 }}>Description exceeds recommended 160 characters. Search engines may truncate it.</p>
+                )}
               </div>
 
               <div className="admin-field">
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="admin-field-label">Site URL</label>
-                  <CharCount value={form.siteUrl} max={100} />
-                </div>
-                <input
-                  className="admin-input"
-                  value={form.siteUrl}
-                  onChange={(e) => set("siteUrl", e.target.value)}
-                  placeholder="https://orvex.studio"
+                <label className="admin-field-label">Keywords</label>
+                <textarea
+                  className="admin-input admin-textarea"
+                  rows={2}
+                  value={form.keywords}
+                  onChange={(e) => set("keywords", e.target.value)}
+                  placeholder="comma, separated, keywords"
                 />
               </div>
+            </div>
+          </div>
 
+          {/* Social / OG */}
+          <div className="admin-card" style={{ padding: 24 }}>
+            <p style={{ fontSize: 11, fontWeight: 600, color: "#484f58", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 16 }}>
+              Open Graph &amp; Social
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               <div className="admin-field">
                 <label className="admin-field-label">OG Image URL</label>
                 <input
                   className="admin-input"
                   value={form.ogImage}
-                  onChange={(e) => set("ogImage", e.target.value)}
-                  placeholder="https://..."
+                  onChange={(e) => { set("ogImage", e.target.value); setImgError(false); }}
+                  placeholder="https://example.com/og-image.jpg (1200×630)"
                 />
-                {form.ogImage && (
-                  <div className="mt-3 rounded overflow-hidden border border-[#30363d]" style={{ maxWidth: 320, aspectRatio: "1200/630" }}>
-                    <img
-                      src={form.ogImage}
-                      alt="OG Preview"
-                      style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                    />
+              </div>
+
+              {previewUrl && !imgError && (
+                <div style={{ borderRadius: 6, overflow: "hidden", border: "1px solid #30363d", maxWidth: 480 }}>
+                  <img
+                    src={previewUrl}
+                    alt="OG image preview"
+                    style={{ width: "100%", height: 252, objectFit: "cover", display: "block" }}
+                    onError={() => setImgError(true)}
+                  />
+                  <div style={{ background: "#0d1117", padding: "8px 12px", borderTop: "1px solid #21262d" }}>
+                    <p style={{ fontSize: 10, color: "#484f58" }}>OG image preview — 1200×630 recommended</p>
                   </div>
-                )}
+                </div>
+              )}
+
+              {previewUrl && imgError && (
+                <p style={{ fontSize: 12, color: "#f85149" }}>Could not load image from that URL.</p>
+              )}
+
+              <div className="admin-form-grid">
+                <div className="admin-field">
+                  <label className="admin-field-label">Twitter Handle</label>
+                  <input
+                    className="admin-input"
+                    value={form.twitterHandle}
+                    onChange={(e) => set("twitterHandle", e.target.value)}
+                    placeholder="@orvex_studio"
+                  />
+                </div>
+                <div className="admin-field">
+                  <label className="admin-field-label">Google Analytics ID</label>
+                  <input
+                    className="admin-input"
+                    value={form.googleAnalyticsId}
+                    onChange={(e) => set("googleAnalyticsId", e.target.value)}
+                    placeholder="G-XXXXXXXXXX"
+                    style={{ fontFamily: "monospace" }}
+                  />
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Social & Analytics */}
-          <div className="admin-card">
-            <h2 className="admin-heading-sm mb-5">Social &amp; Analytics</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="admin-field">
-                <label className="admin-field-label">Twitter Handle</label>
-                <input
-                  className="admin-input"
-                  value={form.twitterHandle}
-                  onChange={(e) => set("twitterHandle", e.target.value)}
-                  placeholder="@handle"
-                />
+          {/* Indexing toggle */}
+          <div className="admin-card" style={{ padding: 24 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div>
+                <p style={{ fontSize: 13, fontWeight: 600, color: "#e6edf3", marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
+                  {form.indexing ? <Eye size={14} /> : <EyeOff size={14} color="#f85149" />}
+                  Search Engine Indexing
+                </p>
+                <p style={{ fontSize: 12, color: "#7d8590" }}>
+                  {form.indexing
+                    ? "Search engines are allowed to index this site. robots.txt is permissive."
+                    : "Indexing is OFF. A noindex header is sent to search engines."}
+                </p>
               </div>
-              <div className="admin-field">
-                <label className="admin-field-label">Google Analytics ID</label>
-                <input
-                  className="admin-input"
-                  value={form.googleAnalyticsId}
-                  onChange={(e) => set("googleAnalyticsId", e.target.value)}
-                  placeholder="G-XXXXXXXXXX"
-                />
-              </div>
+              <Toggle value={form.indexing} onChange={(v) => set("indexing", v)} />
             </div>
-          </div>
-
-          {/* Indexing */}
-          <div className="admin-card">
-            <h2 className="admin-heading-sm mb-5">Indexing</h2>
-            <div className="admin-field" style={{ maxWidth: 300 }}>
-              <label className="admin-field-label">Robots Meta Tag</label>
-              <select
-                className="admin-input admin-select"
-                value={form.robots}
-                onChange={(e) => set("robots", e.target.value as SEOSettings["robots"])}
-              >
-                <option value="index,follow">index, follow (recommended)</option>
-                <option value="noindex,nofollow">noindex, nofollow</option>
-                <option value="index,nofollow">index, nofollow</option>
-              </select>
-            </div>
-            {form.robots !== "index,follow" && (
-              <div className="mt-3 flex items-center gap-2 text-[#d29922] text-sm">
-                <span>⚠</span>
-                <span>Non-standard robots setting may prevent indexing.</span>
+            {!form.indexing && (
+              <div style={{ marginTop: 12, background: "rgba(248,81,73,0.08)", border: "1px solid rgba(248,81,73,0.2)", borderRadius: 6, padding: "8px 12px" }}>
+                <p style={{ fontSize: 12, color: "#f85149" }}>Warning: search engines will not index this site while indexing is disabled.</p>
               </div>
             )}
-          </div>
-
-          {/* Live Preview */}
-          <div className="admin-card">
-            <h2 className="admin-heading-sm mb-5">Search Result Preview</h2>
-            <p className="text-xs text-[#7d8590] mb-4">Approximate Google SERP appearance</p>
-            <div
-              style={{
-                background: "#1c2028",
-                border: "1px solid #30363d",
-                borderRadius: 8,
-                padding: "16px 20px",
-                maxWidth: 600,
-                fontFamily: "Arial, sans-serif",
-              }}
-            >
-              {/* Favicon row */}
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                <div style={{ width: 16, height: 16, borderRadius: 2, background: "#ff5a00", flexShrink: 0 }} />
-                <span style={{ fontSize: 12, color: "#bdc1c6" }}>{previewUrl}</span>
-              </div>
-              {/* Title */}
-              <p style={{ fontSize: 18, color: "#8ab4f8", margin: "4px 0", lineHeight: 1.3, cursor: "pointer", textDecoration: "underline" }}>
-                {previewTitle.slice(0, 60)}
-              </p>
-              {/* Description */}
-              <p style={{ fontSize: 13, color: "#bdc1c6", margin: 0, lineHeight: 1.5 }}>
-                {previewDesc}
-              </p>
-            </div>
           </div>
         </div>
       </div>

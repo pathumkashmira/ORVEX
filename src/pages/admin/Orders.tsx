@@ -1,331 +1,470 @@
 import { useState, useMemo } from "react";
-import { Eye, DollarSign, Clock, ShoppingCart } from "lucide-react";
 import AdminLayout from "@/components/AdminLayout";
-import { useAdmin } from "@/contexts/AdminContext";
+import { useAdmin, type Order } from "@/contexts/AdminContext";
 import { useToast } from "@/contexts/ToastContext";
+import ConfirmDialog from "@/components/admin/ConfirmDialog";
 import SlideOver from "@/components/admin/SlideOver";
-import DataTable, { type Column } from "@/components/admin/DataTable";
-import type { Order } from "@/data/seed";
 
-function fmt(n: number) {
-  return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function genId() {
+  return Date.now().toString() + Math.random().toString(36).slice(2, 7);
 }
 
-function fmtDate(s: string) {
-  try {
-    return new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-  } catch {
-    return s;
-  }
-}
-
-const PAYMENT_STATUSES = [
+const PAYMENT_STATUSES: Order["paymentStatus"][] = [
   "pending", "processing", "paid", "partially_paid", "failed", "refunded", "cancelled",
-] as const;
-type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
-
-const PROJECT_STATUSES = [
-  "inquiry", "scoping", "proposal_sent", "in_progress", "review", "revision",
-  "final_delivery", "completed", "on_hold", "cancelled",
 ];
 
-const paymentBadge: Record<string, string> = {
-  paid: "admin-badge-green",
-  pending: "admin-badge-yellow",
-  processing: "admin-badge-blue",
-  partially_paid: "admin-badge-orange",
-  failed: "admin-badge-red",
-  refunded: "admin-badge-gray",
-  cancelled: "admin-badge-gray",
+const PROJECT_STATUSES = [
+  "DISCOVERY", "PLANNING", "MODELING", "RENDERING", "REVIEW", "COMPLETED",
+];
+
+const EMPTY_FORM = {
+  customer: "",
+  email: "",
+  service: "",
+  package: "",
+  amount: 0,
+  deposit: 0,
+  paymentStatus: "pending" as Order["paymentStatus"],
+  projectStatus: "DISCOVERY",
 };
 
-const projectBadge: Record<string, string> = {
-  inquiry: "admin-badge-gray",
-  scoping: "admin-badge-blue",
-  proposal_sent: "admin-badge-blue",
-  in_progress: "admin-badge-orange",
-  review: "admin-badge-yellow",
-  revision: "admin-badge-yellow",
-  final_delivery: "admin-badge-blue",
-  completed: "admin-badge-green",
-  on_hold: "admin-badge-gray",
-  cancelled: "admin-badge-red",
-};
+type FormState = typeof EMPTY_FORM;
 
-function fmtLabel(s: string) {
-  return s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-function OrderDetail({ order, onClose }: { order: Order; onClose: () => void }) {
-  const { orders_ } = useAdmin();
-  const { toast } = useToast();
-  const [payStatus, setPayStatus] = useState(order.paymentStatus);
-  const [projStatus, setProjStatus] = useState((order as unknown as Record<string, string>).projectStatus ?? "");
-
-  const savePayment = () => {
-    orders_.update({ ...order, paymentStatus: payStatus as Order["paymentStatus"] });
-    toast.success("Order updated");
-  };
-
-  const saveProject = () => {
-    orders_.update({ ...order, projectStatus: projStatus } as Order);
-    toast.success("Order updated");
-  };
-
-  return (
-    <SlideOver open onClose={onClose} title={`Order ${order.orderId}`} subtitle={order.customer} width="lg">
-      <div className="space-y-6">
-        <div className="admin-card">
-          <p className="admin-label text-[#7d8590] mb-3">Order Details</p>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-3">
-            {[
-              ["Order ID", <span className="font-mono text-xs text-[#ff5a00]">{order.orderId}</span>],
-              ["Date", fmtDate(order.createdAt)],
-              ["Customer", order.customer],
-              ["Email", order.email],
-              ["Service", order.service],
-              ["Package", order.package],
-              ["Amount", <span className="font-semibold">{fmt(order.amount)}</span>],
-              ["Deposit", fmt(order.deposit)],
-            ].map(([label, val]) => (
-              <div key={String(label)}>
-                <p className="text-[#7d8590] text-xs mb-0.5">{label}</p>
-                <p className="text-[#e6edf3] text-sm">{val}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="admin-card space-y-3">
-          <p className="admin-label text-[#7d8590]">Update Payment Status</p>
-          <select className="admin-select w-full" value={payStatus} onChange={(e) => setPayStatus(e.target.value as PaymentStatus)}>
-            {PAYMENT_STATUSES.map((s) => (
-              <option key={s} value={s}>{fmtLabel(s)}</option>
-            ))}
-          </select>
-          <button className="admin-btn admin-btn-primary admin-btn-sm" onClick={savePayment}>
-            Save Payment Status
-          </button>
-        </div>
-
-        <div className="admin-card space-y-3">
-          <p className="admin-label text-[#7d8590]">Update Project Status</p>
-          <select className="admin-select w-full" value={projStatus} onChange={(e) => setProjStatus(e.target.value)}>
-            <option value="">— None —</option>
-            {PROJECT_STATUSES.map((s) => (
-              <option key={s} value={s}>{fmtLabel(s)}</option>
-            ))}
-          </select>
-          <button className="admin-btn admin-btn-primary admin-btn-sm" onClick={saveProject}>
-            Save Project Status
-          </button>
-        </div>
-      </div>
-    </SlideOver>
-  );
-}
-
-export default function Orders() {
+export default function AdminOrders() {
   const { orders, orders_ } = useAdmin();
   const { toast } = useToast();
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("ALL");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
-  const [selected, setSelected] = useState<Order | null>(null);
 
-  const totalRevenue = useMemo(
-    () => orders.filter((o) => o.paymentStatus === "paid").reduce((s, o) => s + o.amount, 0),
-    [orders]
-  );
-  const activeOrders = useMemo(
-    () => orders.filter((o) => {
-      const ps = (o as unknown as Record<string, string>).projectStatus;
-      return ps !== "completed" && ps !== "cancelled";
-    }).length,
-    [orders]
-  );
-  const pendingOrders = useMemo(() => orders.filter((o) => o.paymentStatus === "pending").length, [orders]);
+  const [search, setSearch] = useState("");
+  const [paymentFilter, setPaymentFilter] = useState<"all" | Order["paymentStatus"]>("all");
+  const [sortCol, setSortCol] = useState<"amount" | "date">("date");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<Order | null>(null);
+  const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [confirmDelete, setConfirmDelete] = useState<{ open: boolean; id: string; name: string }>({ open: false, id: "", name: "" });
+
+  const items = orders;
 
   const filtered = useMemo(() => {
-    return orders.filter((o) => {
+    let list = [...items];
+    if (paymentFilter !== "all") list = list.filter((o) => o.paymentStatus === paymentFilter);
+    if (search.trim()) {
       const q = search.toLowerCase();
-      const matchSearch = !q || o.orderId.toLowerCase().includes(q) || o.customer.toLowerCase().includes(q);
-      const matchStatus = statusFilter === "ALL" || o.paymentStatus === statusFilter;
-      const matchFrom = !dateFrom || o.createdAt >= dateFrom;
-      const matchTo = !dateTo || o.createdAt <= dateTo;
-      return matchSearch && matchStatus && matchFrom && matchTo;
+      list = list.filter(
+        (o) =>
+          o.orderId.toLowerCase().includes(q) ||
+          o.customer.toLowerCase().includes(q) ||
+          o.email.toLowerCase().includes(q) ||
+          o.service.toLowerCase().includes(q)
+      );
+    }
+    list.sort((a, b) => {
+      if (sortCol === "amount") {
+        return sortDir === "asc" ? a.amount - b.amount : b.amount - a.amount;
+      }
+      const da = new Date(a.createdAt).getTime();
+      const db = new Date(b.createdAt).getTime();
+      return sortDir === "asc" ? da - db : db - da;
     });
-  }, [orders, search, statusFilter, dateFrom, dateTo]);
+    return list;
+  }, [items, search, paymentFilter, sortCol, sortDir]);
 
-  const columns: Column<Order>[] = [
-    {
-      key: "orderId",
-      label: "Order ID",
-      sortable: true,
-      width: "130px",
-      render: (row) => <span className="font-mono text-xs text-[#ff5a00]">{row.orderId}</span>,
-    },
-    {
-      key: "customer",
-      label: "Customer",
-      sortable: true,
-      render: (row) => (
-        <div>
-          <p className="text-[#e6edf3] text-sm font-medium leading-tight">{row.customer}</p>
-          <p className="text-[#7d8590] text-xs">{row.email}</p>
-        </div>
-      ),
-    },
-    {
-      key: "service",
-      label: "Service",
-      render: (row) => (
-        <div>
-          <p className="text-[#e6edf3] text-sm leading-tight">{row.service}</p>
-          <p className="text-[#7d8590] text-xs">{row.package}</p>
-        </div>
-      ),
-    },
-    {
-      key: "amount",
-      label: "Amount",
-      sortable: true,
-      width: "100px",
-      render: (row) => <span className="text-[#e6edf3] font-semibold text-sm">{fmt(row.amount)}</span>,
-    },
-    {
-      key: "deposit",
-      label: "Deposit",
-      width: "100px",
-      render: (row) => <span className="text-[#7d8590] text-sm">{fmt(row.deposit)}</span>,
-    },
-    {
-      key: "paymentStatus",
-      label: "Payment",
-      sortable: true,
-      width: "130px",
-      render: (row) => (
-        <span className={`admin-badge ${paymentBadge[row.paymentStatus] ?? "admin-badge-gray"}`}>
-          {fmtLabel(row.paymentStatus)}
-        </span>
-      ),
-    },
-    {
-      key: "projectStatus",
-      label: "Project",
-      width: "130px",
-      render: (row) => {
-        const ps = (row as unknown as Record<string, string>).projectStatus;
-        return ps ? (
-          <span className={`admin-badge ${projectBadge[ps] ?? "admin-badge-gray"}`}>{fmtLabel(ps)}</span>
-        ) : (
-          <span className="text-[#7d8590] text-xs">—</span>
-        );
-      },
-    },
-    {
-      key: "createdAt",
-      label: "Date",
-      sortable: true,
-      width: "110px",
-      render: (row) => <span className="text-[#7d8590] text-xs">{fmtDate(row.createdAt)}</span>,
-    },
-    {
-      key: "_actions",
-      label: "Actions",
-      width: "150px",
-      render: (row) => (
-        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-          {row.paymentStatus !== "paid" && (
-            <button
-              className="admin-btn admin-btn-sm admin-btn-primary"
-              onClick={() => {
-                orders_.update({ ...row, paymentStatus: "paid" });
-                toast.success("Order marked as paid");
-              }}
-            >
-              Mark Paid
-            </button>
-          )}
-          <button className="admin-btn admin-btn-sm admin-btn-ghost" onClick={() => setSelected(row)}>
-            <Eye size={14} />
-          </button>
-        </div>
-      ),
-    },
-  ];
+  function openCreate() {
+    setEditing(null);
+    setForm(EMPTY_FORM);
+    setShowForm(true);
+  }
+
+  function openEdit(o: Order) {
+    setEditing(o);
+    setForm({
+      customer: o.customer,
+      email: o.email,
+      service: o.service,
+      package: o.package ?? "",
+      amount: o.amount,
+      deposit: o.deposit ?? 0,
+      paymentStatus: o.paymentStatus,
+      projectStatus: o.projectStatus ?? "DISCOVERY",
+    });
+    setShowForm(true);
+  }
+
+  function handleSort(col: "amount" | "date") {
+    if (sortCol === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortCol(col); setSortDir("desc"); }
+  }
+
+  function setField<K extends keyof FormState>(key: K, value: FormState[K]) {
+    setForm((f) => ({ ...f, [key]: value }));
+  }
+
+  function handleSave() {
+    if (!form.customer.trim()) { toast.error("Customer name is required"); return; }
+    if (!form.email.trim()) { toast.error("Email is required"); return; }
+    if (!form.service.trim()) { toast.error("Service is required"); return; }
+
+    if (editing) {
+      orders_.edit(editing.id, {
+        customer: form.customer,
+        email: form.email,
+        service: form.service,
+        package: form.package,
+        amount: form.amount,
+        deposit: form.deposit,
+        paymentStatus: form.paymentStatus,
+        projectStatus: form.projectStatus,
+      });
+      toast.success("Order updated");
+    } else {
+      const orderId = "ORD-" + Date.now().toString().slice(-6);
+      const newItem: Order = {
+        id: genId(),
+        orderId,
+        customer: form.customer,
+        email: form.email,
+        service: form.service,
+        package: form.package,
+        amount: form.amount,
+        deposit: form.deposit,
+        paymentStatus: form.paymentStatus,
+        projectStatus: form.projectStatus,
+        createdAt: new Date().toISOString().slice(0, 10),
+      };
+      orders_.add(newItem);
+      toast.success("Order created");
+    }
+    setShowForm(false);
+  }
+
+  function handleDelete() {
+    orders_.del(confirmDelete.id);
+    toast.success(`Order "${confirmDelete.name}" deleted`);
+    setConfirmDelete({ open: false, id: "", name: "" });
+  }
+
+  function handleQuickPaymentStatus(o: Order, status: Order["paymentStatus"]) {
+    orders_.edit(o.id, { paymentStatus: status });
+    toast.success(`Payment status updated to ${status}`);
+  }
+
+  function formatCurrency(n: number) {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
+  }
+
+  function formatDate(d: string) {
+    return new Date(d).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+  }
+
+  function sortIcon(col: "amount" | "date") {
+    return sortCol === col ? (sortDir === "asc" ? " ↑" : " ↓") : "";
+  }
+
+  function paymentBadge(s: Order["paymentStatus"]) {
+    const map: Record<Order["paymentStatus"], string> = {
+      pending: "admin-badge-yellow",
+      processing: "admin-badge-blue",
+      paid: "admin-badge-green",
+      partially_paid: "admin-badge-orange",
+      failed: "admin-badge-red",
+      refunded: "admin-badge-gray",
+      cancelled: "admin-badge-gray",
+    };
+    const label = s.replace("_", " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    return <span className={`admin-badge ${map[s]}`}>{label}</span>;
+  }
+
+  function projectStatusBadge(s?: string) {
+    if (!s) return <span style={{ color: "#7d8590" }}>—</span>;
+    const map: Record<string, string> = {
+      DISCOVERY: "admin-badge-blue",
+      PLANNING: "admin-badge-yellow",
+      MODELING: "admin-badge-orange",
+      RENDERING: "admin-badge-purple",
+      REVIEW: "admin-badge-orange",
+      COMPLETED: "admin-badge-green",
+    };
+    return <span className={`admin-badge ${map[s] ?? "admin-badge-gray"}`}>{s}</span>;
+  }
 
   return (
     <AdminLayout>
       <div className="admin-page">
-        {/* Header */}
         <div className="admin-page-header">
           <div>
             <h1 className="admin-heading">Orders</h1>
-            <p className="admin-body text-[#7d8590] mt-1">{orders.length} total orders</p>
+            <p style={{ color: "#7d8590", fontSize: 13, margin: 0 }}>
+              {filtered.length} of {items.length} orders
+            </p>
           </div>
-          <div className="flex items-center gap-3 flex-wrap">
-            {[
-              { icon: <DollarSign size={14} className="text-[#3fb950]" />, bg: "bg-[#238636]/15", label: "Total Revenue", value: fmt(totalRevenue) },
-              { icon: <ShoppingCart size={14} className="text-[#ff5a00]" />, bg: "bg-[#ff5a00]/10", label: "Active Orders", value: String(activeOrders) },
-              { icon: <Clock size={14} className="text-[#d29922]" />, bg: "bg-[#d29922]/10", label: "Pending", value: String(pendingOrders) },
-            ].map((stat) => (
-              <div key={stat.label} className="admin-stat-card flex items-center gap-3 px-4 py-2.5">
-                <div className={`w-8 h-8 rounded-full ${stat.bg} flex items-center justify-center flex-shrink-0`}>
-                  {stat.icon}
-                </div>
-                <div>
-                  <p className="text-[#7d8590] text-xs">{stat.label}</p>
-                  <p className="text-[#e6edf3] font-semibold text-sm">{stat.value}</p>
-                </div>
-              </div>
-            ))}
-          </div>
+          <button className="admin-btn admin-btn-primary" onClick={openCreate}>
+            + New Order
+          </button>
         </div>
 
-        {/* Filter bar */}
-        <div className="admin-filter-bar flex-wrap gap-3">
-          <div className="admin-search">
-            <svg className="admin-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
-            </svg>
+        <div className="admin-filter-bar">
+          <div style={{ position: "relative" }}>
+            <span className="admin-search-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="11" cy="11" r="8" />
+                <path d="m21 21-4.35-4.35" />
+              </svg>
+            </span>
             <input
-              className="admin-input pl-9 w-60"
-              placeholder="Search order ID or customer…"
+              className="admin-search"
+              placeholder="Search orders…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
-          <div className="flex items-center gap-1 flex-wrap">
-            {(["ALL", ...PAYMENT_STATUSES] as string[]).map((s) => (
-              <button
-                key={s}
-                onClick={() => setStatusFilter(s)}
-                className={`admin-btn admin-btn-sm ${statusFilter === s ? "admin-btn-primary" : "admin-btn-ghost"}`}
-              >
-                {s === "ALL" ? "All" : fmtLabel(s)}
-              </button>
+          <select
+            className="admin-select"
+            style={{ maxWidth: 180 }}
+            value={paymentFilter}
+            onChange={(e) => setPaymentFilter(e.target.value as typeof paymentFilter)}
+          >
+            <option value="all">All Payment Statuses</option>
+            {PAYMENT_STATUSES.map((s) => (
+              <option key={s} value={s}>
+                {s.replace("_", " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+              </option>
             ))}
-          </div>
-          <div className="flex items-center gap-2 ml-auto">
-            <span className="text-[#7d8590] text-xs">From</span>
-            <input type="date" className="admin-input text-xs px-2 py-1.5" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-            <span className="text-[#7d8590] text-xs">To</span>
-            <input type="date" className="admin-input text-xs px-2 py-1.5" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
-          </div>
+          </select>
         </div>
 
-        <DataTable
-          data={filtered}
-          columns={columns}
-          emptyMessage="No orders match your filters."
-          emptyIcon={<ShoppingCart size={32} />}
-          onRowClick={(row) => setSelected(row)}
-        />
+        <div className="admin-card admin-table-wrap">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>Order ID</th>
+                <th>Customer</th>
+                <th>Service</th>
+                <th>Package</th>
+                <th style={{ cursor: "pointer" }} onClick={() => handleSort("amount")}>
+                  Amount{sortIcon("amount")}
+                </th>
+                <th>Deposit</th>
+                <th>Payment</th>
+                <th>Project</th>
+                <th style={{ cursor: "pointer" }} onClick={() => handleSort("date")}>
+                  Date{sortIcon("date")}
+                </th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.length === 0 && (
+                <tr>
+                  <td colSpan={10}>
+                    <div className="admin-empty">No orders found</div>
+                  </td>
+                </tr>
+              )}
+              {filtered.map((o) => (
+                <tr key={o.id}>
+                  <td style={{ fontFamily: "monospace", fontSize: 12, color: "#58a6ff", fontWeight: 600 }}>
+                    {o.orderId}
+                  </td>
+                  <td>
+                    <div style={{ fontWeight: 600, color: "#e6edf3" }}>{o.customer}</div>
+                    <div style={{ fontSize: 12, color: "#7d8590" }}>{o.email}</div>
+                  </td>
+                  <td style={{ color: "#c9d1d9" }}>{o.service}</td>
+                  <td style={{ color: "#7d8590", fontSize: 12 }}>{o.package || "—"}</td>
+                  <td style={{ fontWeight: 700, color: "#e6edf3" }}>{formatCurrency(o.amount)}</td>
+                  <td style={{ color: "#7d8590" }}>{o.deposit ? formatCurrency(o.deposit) : "—"}</td>
+                  <td>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      {paymentBadge(o.paymentStatus)}
+                      <select
+                        style={{
+                          fontSize: 11,
+                          background: "#0d1117",
+                          border: "1px solid #30363d",
+                          borderRadius: 4,
+                          color: "#7d8590",
+                          padding: "2px 4px",
+                          cursor: "pointer",
+                        }}
+                        value={o.paymentStatus}
+                        onChange={(e) => handleQuickPaymentStatus(o, e.target.value as Order["paymentStatus"])}
+                      >
+                        {PAYMENT_STATUSES.map((s) => (
+                          <option key={s} value={s}>
+                            {s.replace("_", " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </td>
+                  <td>{projectStatusBadge(o.projectStatus)}</td>
+                  <td style={{ color: "#7d8590", fontSize: 12, whiteSpace: "nowrap" }}>
+                    {formatDate(o.createdAt)}
+                  </td>
+                  <td>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button className="admin-btn admin-btn-secondary admin-btn-sm" onClick={() => openEdit(o)}>
+                        Edit
+                      </button>
+                      <button
+                        className="admin-btn admin-btn-danger admin-btn-sm"
+                        onClick={() => setConfirmDelete({ open: true, id: o.id, name: o.orderId })}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      {selected && <OrderDetail order={selected} onClose={() => setSelected(null)} />}
+      <SlideOver
+        open={showForm}
+        onClose={() => setShowForm(false)}
+        title={editing ? "Edit Order" : "New Order"}
+        subtitle={editing ? editing.orderId : "Create a new order"}
+        width="lg"
+        footer={
+          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+            <button className="admin-btn admin-btn-ghost" onClick={() => setShowForm(false)}>
+              Cancel
+            </button>
+            <button className="admin-btn admin-btn-primary" onClick={handleSave}>
+              {editing ? "Save Changes" : "Create Order"}
+            </button>
+          </div>
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 20, padding: "24px" }}>
+          <div className="admin-form-grid">
+            <div className="admin-field">
+              <label className="admin-field-label">Customer Name *</label>
+              <input
+                className="admin-input"
+                value={form.customer}
+                onChange={(e) => setField("customer", e.target.value)}
+                placeholder="Full name"
+              />
+            </div>
+            <div className="admin-field">
+              <label className="admin-field-label">Email *</label>
+              <input
+                className="admin-input"
+                type="email"
+                value={form.email}
+                onChange={(e) => setField("email", e.target.value)}
+                placeholder="customer@example.com"
+              />
+            </div>
+          </div>
+
+          <div className="admin-form-grid">
+            <div className="admin-field">
+              <label className="admin-field-label">Service *</label>
+              <input
+                className="admin-input"
+                value={form.service}
+                onChange={(e) => setField("service", e.target.value)}
+                placeholder="e.g. Product CGI"
+              />
+            </div>
+            <div className="admin-field">
+              <label className="admin-field-label">Package</label>
+              <input
+                className="admin-input"
+                value={form.package}
+                onChange={(e) => setField("package", e.target.value)}
+                placeholder="e.g. Studio, Pro"
+              />
+            </div>
+          </div>
+
+          <div className="admin-form-grid">
+            <div className="admin-field">
+              <label className="admin-field-label">Total Amount (USD)</label>
+              <input
+                className="admin-input"
+                type="number"
+                min={0}
+                value={form.amount}
+                onChange={(e) => setField("amount", Number(e.target.value))}
+                placeholder="0"
+              />
+            </div>
+            <div className="admin-field">
+              <label className="admin-field-label">Deposit (USD)</label>
+              <input
+                className="admin-input"
+                type="number"
+                min={0}
+                value={form.deposit}
+                onChange={(e) => setField("deposit", Number(e.target.value))}
+                placeholder="0"
+              />
+            </div>
+          </div>
+
+          <div className="admin-form-grid">
+            <div className="admin-field">
+              <label className="admin-field-label">Payment Status</label>
+              <select
+                className="admin-select"
+                value={form.paymentStatus}
+                onChange={(e) => setField("paymentStatus", e.target.value as Order["paymentStatus"])}
+              >
+                {PAYMENT_STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {s.replace("_", " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="admin-field">
+              <label className="admin-field-label">Project Status</label>
+              <select
+                className="admin-select"
+                value={form.projectStatus}
+                onChange={(e) => setField("projectStatus", e.target.value)}
+              >
+                {PROJECT_STATUSES.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {form.amount > 0 && form.deposit > 0 && (
+            <div style={{ background: "#0d1117", border: "1px solid #21262d", borderRadius: 8, padding: "12px 16px" }}>
+              <p style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", color: "#7d8590", marginBottom: 6, margin: "0 0 6px" }}>Payment Summary</p>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#c9d1d9" }}>
+                <span>Total</span>
+                <span style={{ fontWeight: 700 }}>{formatCurrency(form.amount)}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#7d8590", marginTop: 4 }}>
+                <span>Deposit</span>
+                <span>{formatCurrency(form.deposit)}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, borderTop: "1px solid #21262d", marginTop: 8, paddingTop: 8, color: "#58a6ff", fontWeight: 600 }}>
+                <span>Remaining</span>
+                <span>{formatCurrency(form.amount - form.deposit)}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      </SlideOver>
+
+      <ConfirmDialog
+        open={confirmDelete.open}
+        title="Delete Order"
+        description={`Are you sure you want to delete order "${confirmDelete.name}"? This action cannot be undone.`}
+        confirmLabel="Delete"
+        destructive
+        onConfirm={handleDelete}
+        onCancel={() => setConfirmDelete({ open: false, id: "", name: "" })}
+      />
     </AdminLayout>
   );
 }

@@ -1,229 +1,203 @@
-import { useState } from "react";
+import { useMemo } from "react";
 import AdminLayout from "@/components/AdminLayout";
 import { useAdmin } from "@/contexts/AdminContext";
 
-type Range = 7 | 30 | 90;
-
-function formatCurrency(n: number) {
-  return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
-}
-
-const MONTHLY_REVENUE = [
-  { month: "Jan", value: 8400 },
-  { month: "Feb", value: 12800 },
-  { month: "Mar", value: 9600 },
-  { month: "Apr", value: 15200 },
-  { month: "May", value: 18500 },
-  { month: "Jun", value: 14900 },
-  { month: "Jul", value: 21300 },
-  { month: "Aug", value: 27800 },
-];
-
-const TRAFFIC_SOURCES = [
-  { label: "Direct",   pct: 45, color: "#ff5a00" },
-  { label: "Referral", pct: 28, color: "#ff8c42" },
-  { label: "Social",   pct: 18, color: "#58a6ff" },
-  { label: "Other",    pct:  9, color: "#7d8590" },
-];
-
-function KpiCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div className="admin-stat-card">
-      <p className="admin-field-label mb-2">{label}</p>
-      <p className="text-2xl font-bold text-[#e6edf3] leading-none">{value}</p>
-      {sub && <p className="text-xs text-[#7d8590] mt-1">{sub}</p>}
-    </div>
-  );
+function fmt(n: number) {
+  return n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 }
 
 export default function AdminAnalytics() {
-  const { orders, customers, bookings, messages, services } = useAdmin();
-  const [range, setRange] = useState<Range>(30);
+  const ctx = useAdmin();
 
-  const totalRevenue = orders
-    .filter((o) => o.paymentStatus === "paid" || o.paymentStatus === "partially_paid")
-    .reduce((s, o) => s + o.amount, 0);
+  // ── Derived stats ─────────────────────────────────────────────────────────
+  const totalRevenue = useMemo(
+    () => ctx.orders.filter((o) => o.paymentStatus === "paid").reduce((s, o) => s + o.amount, 0),
+    [ctx.orders]
+  );
+  const totalOrders = ctx.orders.length;
+  const totalCustomers = ctx.customers.length;
+  const totalProjects = ctx.projects.length;
 
-  const msInRange = range * 24 * 60 * 60 * 1000;
-  const now = Date.now();
-
-  const recentOrders = orders.filter((o) => {
-    try { return now - new Date(o.createdAt).getTime() < msInRange; } catch { return false; }
-  });
-  const recentCustomers = customers.filter((c) => {
-    try { return now - new Date(c.createdAt).getTime() < msInRange; } catch { return false; }
-  });
-
-  const confirmedBookings = bookings.filter((b) => b.status === "confirmed" || b.status === "completed");
-  const bookingRate = bookings.length > 0 ? Math.round((confirmedBookings.length / bookings.length) * 100) : 0;
-  const avgOrderValue = orders.length > 0 ? Math.round(totalRevenue / orders.length) : 0;
-
-  const maxRevenue = Math.max(...MONTHLY_REVENUE.map((m) => m.value));
-
-  const serviceCounts: Record<string, { name: string; count: number }> = {};
-  for (const o of orders) {
-    const id = o.service ?? "unknown";
-    if (!serviceCounts[id]) {
-      const svc = services.find((s) => s.id === id || s.title === id);
-      serviceCounts[id] = { name: svc?.title ?? id, count: 0 };
+  // ── Revenue by month (last 6 months) ─────────────────────────────────────
+  const revenueByMonth = useMemo(() => {
+    const now = new Date("2026-08-16");
+    const months: { label: string; key: string; revenue: number }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      const label = d.toLocaleString("en-US", { month: "short" });
+      months.push({ label, key, revenue: 0 });
     }
-    serviceCounts[id].count++;
-  }
-  const topServices = Object.values(serviceCounts)
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 5);
-  const maxSvcCount = topServices[0]?.count ?? 1;
+    ctx.orders.forEach((o) => {
+      if (o.paymentStatus !== "paid") return;
+      const key = o.createdAt.slice(0, 7);
+      const m = months.find((m) => m.key === key);
+      if (m) m.revenue += o.amount;
+    });
+    return months;
+  }, [ctx.orders]);
 
-  const recentConversions = [...orders]
-    .filter((o) => o.paymentStatus === "paid")
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    .slice(0, 5);
+  const maxRevenue = Math.max(...revenueByMonth.map((m) => m.revenue), 1);
+
+  // ── Order status breakdown ────────────────────────────────────────────────
+  const statusCounts = useMemo(() => {
+    const map: Record<string, number> = {};
+    ctx.orders.forEach((o) => {
+      map[o.paymentStatus] = (map[o.paymentStatus] ?? 0) + 1;
+    });
+    return Object.entries(map).map(([status, count]) => ({ status, count, pct: Math.round((count / ctx.orders.length) * 100) }));
+  }, [ctx.orders]);
+
+  const statusColor: Record<string, string> = {
+    paid: "#3fb950",
+    pending: "#d29922",
+    partially_paid: "#58a6ff",
+    processing: "#a371f7",
+    refunded: "#f85149",
+    failed: "#f85149",
+  };
+
+  // ── Top 5 customers by spend ──────────────────────────────────────────────
+  const topCustomers = useMemo(
+    () => [...ctx.customers].sort((a, b) => b.totalSpent - a.totalSpent).slice(0, 5),
+    [ctx.customers]
+  );
+
+  // ── Lead stage breakdown ──────────────────────────────────────────────────
+  const leadStages = useMemo(() => {
+    const map: Record<string, number> = {};
+    ctx.leads.forEach((l) => { map[l.stage] = (map[l.stage] ?? 0) + 1; });
+    return Object.entries(map).map(([stage, count]) => ({ stage, count }));
+  }, [ctx.leads]);
+  const maxLeadCount = Math.max(...leadStages.map((s) => s.count), 1);
+
+  const stageColor: Record<string, string> = {
+    new: "#58a6ff",
+    contacted: "#a371f7",
+    qualified: "#d29922",
+    proposal: "#ff5a00",
+    won: "#3fb950",
+    lost: "#f85149",
+  };
 
   return (
     <AdminLayout>
       <div className="admin-page">
-        {/* Header */}
         <div className="admin-page-header">
           <div>
+            <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.1em", color: "#484f58", textTransform: "uppercase", marginBottom: 4 }}>OVERVIEW</p>
             <h1 className="admin-heading">Analytics</h1>
-            <p className="text-sm text-[#7d8590] mt-1">Studio performance overview</p>
-          </div>
-          <div className="flex items-center gap-2">
-            {([7, 30, 90] as Range[]).map((r) => (
-              <button
-                key={r}
-                onClick={() => setRange(r)}
-                className={`admin-btn admin-btn-sm ${range === r ? "admin-btn-primary" : "admin-btn-ghost"}`}
-              >
-                {r}d
-              </button>
-            ))}
           </div>
         </div>
 
-        {/* KPI Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4 mb-8">
-          <KpiCard label="Total Revenue"    value={formatCurrency(totalRevenue)}  sub="All time" />
-          <KpiCard label="Orders"           value={String(recentOrders.length)}   sub={`Last ${range} days`} />
-          <KpiCard label="New Customers"    value={String(recentCustomers.length)} sub={`Last ${range} days`} />
-          <KpiCard label="Booking Rate"     value={`${bookingRate}%`}             sub="Confirmed vs total" />
-          <KpiCard label="Messages"         value={String(messages.length)}       sub="All inbox" />
-          <KpiCard label="Avg Order Value"  value={formatCurrency(avgOrderValue)} sub="Per order" />
+        {/* Stat cards */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 28 }}>
+          {[
+            { label: "Total Revenue", value: fmt(totalRevenue), sub: "from paid orders" },
+            { label: "Total Orders", value: totalOrders.toString(), sub: "all time" },
+            { label: "Total Customers", value: totalCustomers.toString(), sub: "registered" },
+            { label: "Total Projects", value: totalProjects.toString(), sub: "portfolio" },
+          ].map((s) => (
+            <div className="admin-stat-card" key={s.label}>
+              <p style={{ fontSize: 11, fontWeight: 600, color: "#484f58", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 10 }}>{s.label}</p>
+              <p style={{ fontSize: 28, fontWeight: 700, color: "#e6edf3", lineHeight: 1, marginBottom: 6 }}>{s.value}</p>
+              <p style={{ fontSize: 12, color: "#7d8590" }}>{s.sub}</p>
+            </div>
+          ))}
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-          {/* Revenue Bar Chart */}
-          <div className="admin-card lg:col-span-2">
-            <h2 className="admin-heading-sm mb-6">Monthly Revenue — Jan to Aug 2026</h2>
-            <div className="space-y-3">
-              {MONTHLY_REVENUE.map((m) => {
-                const pct = maxRevenue > 0 ? (m.value / maxRevenue) * 100 : 0;
-                return (
-                  <div key={m.month} className="flex items-center gap-3">
-                    <span className="text-xs text-[#7d8590] w-8 shrink-0">{m.month}</span>
-                    <div className="flex-1 h-7 bg-[#0d1117] rounded overflow-hidden">
-                      <div
-                        style={{
-                          width: `${pct}%`,
-                          background: "linear-gradient(90deg,#ff5a00,#ff8c42)",
-                          height: "100%",
-                          minWidth: pct > 0 ? "4px" : "0",
-                          borderRadius: "3px",
-                          transition: "width 0.5s ease",
-                        }}
-                      />
-                    </div>
-                    <span className="text-xs text-[#e6edf3] w-16 text-right shrink-0">
-                      {formatCurrency(m.value)}
-                    </span>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 }}>
+          {/* Revenue bar chart */}
+          <div className="admin-card" style={{ padding: 24 }}>
+            <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "#484f58", marginBottom: 20 }}>Revenue — Last 6 Months</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {revenueByMonth.map((m) => (
+                <div key={m.key} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ fontSize: 11, color: "#7d8590", width: 28, flexShrink: 0 }}>{m.label}</span>
+                  <div style={{ flex: 1, height: 20, background: "#21262d", borderRadius: 4, overflow: "hidden" }}>
+                    <div style={{ width: `${(m.revenue / maxRevenue) * 100}%`, height: "100%", background: "#ff5a00", borderRadius: 4, minWidth: m.revenue > 0 ? 4 : 0, transition: "width 0.4s" }} />
                   </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Traffic Sources */}
-          <div className="admin-card">
-            <h2 className="admin-heading-sm mb-6">Traffic Sources</h2>
-            <div className="flex h-8 rounded overflow-hidden mb-5">
-              {TRAFFIC_SOURCES.map((src) => (
-                <div
-                  key={src.label}
-                  style={{ width: `${src.pct}%`, background: src.color }}
-                  title={`${src.label}: ${src.pct}%`}
-                />
-              ))}
-            </div>
-            <div className="space-y-3">
-              {TRAFFIC_SOURCES.map((src) => (
-                <div key={src.label} className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: src.color }} />
-                    <span className="text-sm text-[#e6edf3]">{src.label}</span>
-                  </div>
-                  <span className="text-sm font-semibold text-[#e6edf3]">{src.pct}%</span>
+                  <span style={{ fontSize: 11, color: "#8b949e", width: 68, textAlign: "right", flexShrink: 0 }}>{m.revenue > 0 ? fmt(m.revenue) : "—"}</span>
                 </div>
               ))}
             </div>
           </div>
+
+          {/* Order status breakdown */}
+          <div className="admin-card" style={{ padding: 24 }}>
+            <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "#484f58", marginBottom: 20 }}>Order Status Breakdown</p>
+            {ctx.orders.length === 0 ? (
+              <p style={{ fontSize: 13, color: "#484f58" }}>No orders yet.</p>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                {statusCounts.map(({ status, count, pct }) => (
+                  <div key={status}>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
+                      <span style={{ fontSize: 12, color: "#c9d1d9", textTransform: "capitalize" }}>{status.replace("_", " ")}</span>
+                      <span style={{ fontSize: 12, color: "#8b949e" }}>{count} ({pct}%)</span>
+                    </div>
+                    <div style={{ height: 8, background: "#21262d", borderRadius: 4, overflow: "hidden" }}>
+                      <div style={{ width: `${pct}%`, height: "100%", background: statusColor[status] ?? "#8b949e", borderRadius: 4 }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Top Services */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+          {/* Top customers */}
           <div className="admin-card">
-            <h2 className="admin-heading-sm mb-5">Top Services by Orders</h2>
-            {topServices.length === 0 ? (
-              <p className="text-sm text-[#7d8590]">No order data available.</p>
+            <div style={{ padding: "16px 20px", borderBottom: "1px solid #21262d" }}>
+              <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "#484f58" }}>Top Customers by Spend</p>
+            </div>
+            {topCustomers.length === 0 ? (
+              <div className="admin-empty"><p style={{ fontSize: 13, color: "#484f58" }}>No customers yet.</p></div>
             ) : (
-              <div className="space-y-4">
-                {topServices.map((svc) => {
-                  const pct = maxSvcCount > 0 ? Math.round((svc.count / maxSvcCount) * 100) : 0;
-                  return (
-                    <div key={svc.name}>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <span className="text-sm text-[#e6edf3] truncate pr-2">{svc.name}</span>
-                        <span className="text-xs text-[#7d8590] shrink-0">{svc.count}</span>
-                      </div>
-                      <div className="h-1.5 bg-[#0d1117] rounded-full overflow-hidden">
-                        <div
-                          style={{
-                            width: `${pct}%`,
-                            background: "linear-gradient(90deg,#ff5a00,#ff8c42)",
-                            height: "100%",
-                            borderRadius: "99px",
-                          }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
+              <div className="admin-table-wrap">
+                <table className="admin-table">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>Customer</th>
+                      <th>Company</th>
+                      <th>Total Spent</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {topCustomers.map((c, i) => (
+                      <tr key={c.id}>
+                        <td style={{ color: "#484f58", width: 32 }}>{i + 1}</td>
+                        <td>
+                          <p style={{ fontWeight: 600, color: "#e6edf3" }}>{c.name}</p>
+                          <p style={{ fontSize: 11, color: "#484f58" }}>{c.email}</p>
+                        </td>
+                        <td style={{ color: "#7d8590" }}>{c.company}</td>
+                        <td style={{ color: "#3fb950", fontWeight: 600 }}>{fmt(c.totalSpent)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>
 
-          {/* Recent Conversions */}
-          <div className="admin-card">
-            <h2 className="admin-heading-sm mb-5">Recent Conversions</h2>
-            {recentConversions.length === 0 ? (
-              <p className="text-sm text-[#7d8590]">No paid orders yet.</p>
+          {/* Lead stage breakdown */}
+          <div className="admin-card" style={{ padding: 24 }}>
+            <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "#484f58", marginBottom: 20 }}>Lead Stages</p>
+            {leadStages.length === 0 ? (
+              <p style={{ fontSize: 13, color: "#484f58" }}>No leads yet.</p>
             ) : (
-              <div>
-                {recentConversions.map((o) => (
-                    <div
-                      key={o.id}
-                      className="flex items-center justify-between py-3 border-b border-[#21262d] last:border-0"
-                    >
-                      <div className="min-w-0">
-                        <p className="text-sm text-[#e6edf3] font-medium truncate">{o.customer}</p>
-                        <p className="text-xs text-[#7d8590] truncate mt-0.5">{o.service}</p>
-                      </div>
-                      <div className="text-right shrink-0 ml-4">
-                        <p className="text-sm font-semibold text-[#ff5a00]">{formatCurrency(o.amount)}</p>
-                        <p className="text-xs text-[#7d8590] mt-0.5">
-                          {new Date(o.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                        </p>
-                      </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {leadStages.map(({ stage, count }) => (
+                  <div key={stage} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{ fontSize: 11, color: "#7d8590", width: 70, flexShrink: 0, textTransform: "capitalize" }}>{stage}</span>
+                    <div style={{ flex: 1, height: 18, background: "#21262d", borderRadius: 4, overflow: "hidden" }}>
+                      <div style={{ width: `${(count / maxLeadCount) * 100}%`, height: "100%", background: stageColor[stage] ?? "#8b949e", borderRadius: 4, minWidth: 4 }} />
                     </div>
+                    <span style={{ fontSize: 11, color: "#8b949e", width: 20, textAlign: "right", flexShrink: 0 }}>{count}</span>
+                  </div>
                 ))}
               </div>
             )}

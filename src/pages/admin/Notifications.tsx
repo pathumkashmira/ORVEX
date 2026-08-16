@@ -1,46 +1,240 @@
+import { useState, useMemo } from "react";
+import { Bell, Mail, ShoppingBag, CreditCard, Calendar, Check, CheckCheck, Trash2 } from "lucide-react";
 import AdminLayout from "@/components/AdminLayout";
-import { Bell, Check } from "lucide-react";
-import { useState } from "react";
+import ConfirmDialog from "@/components/admin/ConfirmDialog";
 
-const notifs = [
-  { id: "1", type: "booking", msg: "New booking: Emma Reynolds — Discovery Call on Aug 20", time: "2 hours ago", read: false },
-  { id: "2", type: "message", msg: "New message from Rania Khalil — Product visualization inquiry", time: "3 hours ago", read: false },
-  { id: "3", type: "order", msg: "New order: ORVEX-ORD-2026-0045 — 3D Advertising PREMIUM", time: "5 hours ago", read: false },
-  { id: "4", type: "payment", msg: "Payment received: Marcus Webb — $3,800 (INV-2026-0041)", time: "2 days ago", read: true },
-  { id: "5", type: "booking", msg: "Booking confirmed: Yuki Tanaka — Creative Consultation Aug 18", time: "2 days ago", read: true },
+type NotifType = "booking" | "message" | "order" | "system" | "payment";
+
+interface Notification {
+  id: string;
+  type: NotifType;
+  title: string;
+  description: string;
+  time: string;
+  read: boolean;
+}
+
+const INITIAL_NOTIFS: Notification[] = [
+  {
+    id: "n1",
+    type: "booking",
+    title: "New Booking Request",
+    description: "Emma Reynolds — Discovery Call scheduled for Aug 20 at 11:00 AM.",
+    time: "2 hours ago",
+    read: false,
+  },
+  {
+    id: "n2",
+    type: "message",
+    title: "New Message",
+    description: "Rania Khalil inquired about product visualization for a luxury perfume line.",
+    time: "3 hours ago",
+    read: false,
+  },
+  {
+    id: "n3",
+    type: "order",
+    title: "New Order Received",
+    description: "ORVEX-ORD-2026-0045 — Emma Reynolds ordered 3D Advertising PREMIUM ($22,000).",
+    time: "5 hours ago",
+    read: false,
+  },
+  {
+    id: "n4",
+    type: "payment",
+    title: "Payment Received",
+    description: "Marcus Webb paid $3,800 for INV-2026-0041 via Stripe.",
+    time: "2 days ago",
+    read: true,
+  },
+  {
+    id: "n5",
+    type: "booking",
+    title: "Booking Confirmed",
+    description: "Yuki Tanaka — Creative Consultation confirmed for Aug 18 at 09:00 AM.",
+    time: "2 days ago",
+    read: true,
+  },
+  {
+    id: "n6",
+    type: "system",
+    title: "System Notice",
+    description: "Admin store was initialized with seed data. All systems are operational.",
+    time: "7 days ago",
+    read: true,
+  },
 ];
 
+const ICON: Record<NotifType, React.ReactNode> = {
+  booking: <Calendar size={16} />,
+  message: <Mail size={16} />,
+  order: <ShoppingBag size={16} />,
+  system: <Bell size={16} />,
+  payment: <CreditCard size={16} />,
+};
+
+const ICON_COLOR: Record<NotifType, string> = {
+  booking:  "#a371f7",
+  message:  "#58a6ff",
+  order:    "#ff5a00",
+  system:   "#d29922",
+  payment:  "#3fb950",
+};
+
 export default function AdminNotifications() {
-  const [items, setItems] = useState(notifs);
-  const markAll = () => setItems(prev => prev.map(n => ({ ...n, read: true })));
+  const [items, setItems] = useState<Notification[]>(INITIAL_NOTIFS);
+  const [filter, setFilter] = useState<"all" | "unread">("all");
+  const [clearOpen, setClearOpen] = useState(false);
+
+  const filtered = useMemo(
+    () => (filter === "unread" ? items.filter((n) => !n.read) : items),
+    [items, filter]
+  );
+
+  const unreadCount = items.filter((n) => !n.read).length;
+
+  function markRead(id: string) {
+    setItems((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
+  }
+
+  function markAllRead() {
+    setItems((prev) => prev.map((n) => ({ ...n, read: true })));
+  }
+
+  function clearAll() {
+    setItems([]);
+    setClearOpen(false);
+  }
 
   return (
     <AdminLayout>
-      <div className="p-6 md:p-8 max-w-[700px]">
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <p className="label-sm text-[#bfc5cc]/40 mb-1">SYSTEM</p>
-            <h1 className="text-2xl font-700 text-[#f5f7f8]" style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700 }}>Notifications</h1>
-          </div>
-          <button onClick={markAll} className="btn-ghost text-[10px]"><Check size={12} /> MARK ALL READ</button>
-        </div>
-        <div className="space-y-2">
-          {items.map(n => (
-            <div key={n.id} className={`border p-4 flex items-start gap-4 ${n.read ? "border-white/5 opacity-60" : "border-[#ff5a00]/20 bg-[#ff5a00]/03"}`}>
-              <div className={`flex-shrink-0 mt-0.5 ${n.read ? "text-[#bfc5cc]/30" : "text-[#ff5a00]"}`}><Bell size={14} /></div>
-              <div className="flex-1">
-                <p className={`text-sm ${n.read ? "text-[#bfc5cc]" : "text-[#f5f7f8]"}`}>{n.msg}</p>
-                <p className="label-sm text-[#bfc5cc]/30 mt-1">{n.time}</p>
-              </div>
-              {!n.read && (
-                <button onClick={() => setItems(prev => prev.map(i => i.id === n.id ? { ...i, read: true } : i))} className="text-[#bfc5cc]/40 hover:text-[#ff5a00] transition-colors flex-shrink-0">
-                  <Check size={13} />
-                </button>
-              )}
+      <div className="admin-page" style={{ maxWidth: 720 }}>
+        <div className="admin-page-header">
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div>
+              <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.1em", color: "#484f58", textTransform: "uppercase", marginBottom: 4 }}>SYSTEM</p>
+              <h1 className="admin-heading">Notifications</h1>
             </div>
+            {unreadCount > 0 && (
+              <span className="admin-badge admin-badge-orange">{unreadCount} unread</span>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            {unreadCount > 0 && (
+              <button className="admin-btn admin-btn-ghost admin-btn-sm" onClick={markAllRead}>
+                <CheckCheck size={13} /> Mark all read
+              </button>
+            )}
+            {items.length > 0 && (
+              <button className="admin-btn admin-btn-danger admin-btn-sm" onClick={() => setClearOpen(true)}>
+                <Trash2 size={13} /> Clear all
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Filter tabs */}
+        <div style={{ display: "flex", gap: 2, marginBottom: 20, borderBottom: "1px solid #21262d" }}>
+          {(["all", "unread"] as const).map((f) => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              style={{
+                padding: "8px 18px",
+                fontSize: 12,
+                fontWeight: 600,
+                textTransform: "capitalize",
+                border: "none",
+                borderBottom: filter === f ? "2px solid #ff5a00" : "2px solid transparent",
+                background: "transparent",
+                color: filter === f ? "#ff5a00" : "#7d8590",
+                cursor: "pointer",
+                transition: "color 0.15s",
+                marginBottom: -1,
+              }}
+            >
+              {f === "all" ? `All (${items.length})` : `Unread (${unreadCount})`}
+            </button>
           ))}
         </div>
+
+        {filtered.length === 0 ? (
+          <div className="admin-empty">
+            <div className="admin-empty-icon"><Bell size={20} color="#484f58" /></div>
+            <p style={{ fontSize: 13, color: "#484f58" }}>
+              {filter === "unread" ? "No unread notifications." : "No notifications."}
+            </p>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {filtered.map((n) => (
+              <div
+                key={n.id}
+                style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: 14,
+                  padding: 16,
+                  borderRadius: 8,
+                  border: n.read ? "1px solid #21262d" : "1px solid rgba(255,90,0,0.2)",
+                  background: n.read ? "transparent" : "rgba(255,90,0,0.03)",
+                  opacity: n.read ? 0.7 : 1,
+                  transition: "opacity 0.15s",
+                }}
+              >
+                {/* Icon */}
+                <div
+                  style={{
+                    width: 34,
+                    height: 34,
+                    borderRadius: 8,
+                    background: `${ICON_COLOR[n.type]}18`,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: ICON_COLOR[n.type],
+                    flexShrink: 0,
+                    marginTop: 1,
+                  }}
+                >
+                  {ICON[n.type]}
+                </div>
+
+                {/* Content */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 4 }}>
+                    <p style={{ fontSize: 13, fontWeight: 600, color: n.read ? "#8b949e" : "#e6edf3" }}>{n.title}</p>
+                    <span style={{ fontSize: 11, color: "#484f58", whiteSpace: "nowrap", flexShrink: 0 }}>{n.time}</span>
+                  </div>
+                  <p style={{ fontSize: 12, color: "#7d8590", lineHeight: 1.5 }}>{n.description}</p>
+                </div>
+
+                {/* Mark read action */}
+                {!n.read && (
+                  <button
+                    onClick={() => markRead(n.id)}
+                    className="admin-btn admin-btn-ghost admin-btn-sm admin-btn-icon"
+                    title="Mark as read"
+                    style={{ flexShrink: 0, marginTop: 2 }}
+                  >
+                    <Check size={13} />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
+
+      <ConfirmDialog
+        open={clearOpen}
+        title="Clear All Notifications"
+        description="This will permanently remove all notifications. Are you sure?"
+        confirmLabel="Clear All"
+        destructive
+        onConfirm={clearAll}
+        onCancel={() => setClearOpen(false)}
+      />
     </AdminLayout>
   );
 }

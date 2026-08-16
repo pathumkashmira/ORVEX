@@ -1,8 +1,15 @@
-import { createBrowserRouter, RouterProvider, Navigate } from "react-router-dom";
+import {
+  createBrowserRouter,
+  RouterProvider,
+  Navigate,
+  Outlet,
+  useLocation,
+} from "react-router-dom";
 import { AppProvider, useApp } from "@/contexts/AppContext";
 import { ToastProvider } from "@/contexts/ToastContext";
 import { AdminProvider } from "@/contexts/AdminContext";
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import OrbitalTransition from "@/components/motion/OrbitalTransition";
 
 // Public pages
 import Home from "@/pages/Home";
@@ -16,7 +23,8 @@ import Process from "@/pages/Process";
 import Journal from "@/pages/Journal";
 import JournalPost from "@/pages/JournalPost";
 import Contact from "@/pages/Contact";
-import BookCall from "@/pages/BookCall";
+import BookAppointment from "@/pages/BookAppointment";
+import OrderConfirmation from "@/pages/OrderConfirmation";
 import FAQ from "@/pages/FAQ";
 import Privacy from "@/pages/Privacy";
 import Terms from "@/pages/Terms";
@@ -34,6 +42,8 @@ import ClientInvoices from "@/pages/client/Invoices";
 import ClientPayments from "@/pages/client/Payments";
 import ClientAppointments from "@/pages/client/Appointments";
 import ClientMessages from "@/pages/client/Messages";
+import ClientFiles from "@/pages/client/Files";
+import ClientProfile from "@/pages/client/Profile";
 
 // Admin
 import AdminDashboard from "@/pages/admin/Dashboard";
@@ -56,6 +66,10 @@ import AdminNotifications from "@/pages/admin/Notifications";
 import AdminAuditLog from "@/pages/admin/AuditLog";
 import AdminLeads from "@/pages/admin/Leads";
 import AdminRoles from "@/pages/admin/Roles";
+import AdminCalendar from "@/pages/admin/Calendar";
+import AdminBookingSettings from "@/pages/admin/BookingSettings";
+
+// ── Guards ────────────────────────────────────────────────────────────────
 
 function AdminGuard({ children }: { children: ReactNode }) {
   const { user } = useApp();
@@ -70,9 +84,56 @@ function ClientGuard({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-function AppRoutes() {
+// ── Root layout — orbital route transitions + scroll progress ─────────────
+
+function AppShell() {
+  const location = useLocation();
+  const [transitionKey, setTransitionKey] = useState(0);
+  const prevPath = useRef(location.pathname);
+
+  // Scroll-progress bar
+  const [scrollPct, setScrollPct] = useState(0);
+  useEffect(() => {
+    const update = () => {
+      const max = document.documentElement.scrollHeight - window.innerHeight;
+      setScrollPct(max > 0 ? (window.scrollY / max) * 100 : 0);
+    };
+    window.addEventListener("scroll", update, { passive: true });
+    return () => window.removeEventListener("scroll", update);
+  }, []);
+
+  // Fire transition on route change
+  useEffect(() => {
+    if (prevPath.current !== location.pathname) {
+      prevPath.current = location.pathname;
+      setTransitionKey((k) => k + 1);
+      // Scroll to top on navigation
+      window.scrollTo(0, 0);
+    }
+  }, [location.pathname]);
+
   return (
-    <RouterProvider router={createBrowserRouter([
+    <>
+      {/* Scroll progress line */}
+      <div
+        className="scroll-progress"
+        style={{ transform: `scaleX(${scrollPct / 100})` }}
+      />
+
+      {/* Orbital page transition — remounts on each route change */}
+      <OrbitalTransition key={transitionKey} />
+
+      <Outlet />
+    </>
+  );
+}
+
+// ── Router ────────────────────────────────────────────────────────────────
+
+const router = createBrowserRouter([
+  {
+    element: <AppShell />,
+    children: [
       { path: "/", element: <Home /> },
       { path: "/work", element: <Work /> },
       { path: "/work/:slug", element: <ProjectDetail /> },
@@ -84,7 +145,8 @@ function AppRoutes() {
       { path: "/journal", element: <Journal /> },
       { path: "/journal/:slug", element: <JournalPost /> },
       { path: "/contact", element: <Contact /> },
-      { path: "/book", element: <BookCall /> },
+      { path: "/book", element: <BookAppointment /> },
+      { path: "/order/:orderId", element: <OrderConfirmation /> },
       { path: "/faq", element: <FAQ /> },
       { path: "/privacy", element: <Privacy /> },
       { path: "/terms", element: <Terms /> },
@@ -99,6 +161,8 @@ function AppRoutes() {
       { path: "/client/payments", element: <ClientGuard><ClientPayments /></ClientGuard> },
       { path: "/client/appointments", element: <ClientGuard><ClientAppointments /></ClientGuard> },
       { path: "/client/messages", element: <ClientGuard><ClientMessages /></ClientGuard> },
+      { path: "/client/files", element: <ClientGuard><ClientFiles /></ClientGuard> },
+      { path: "/client/profile", element: <ClientGuard><ClientProfile /></ClientGuard> },
 
       // Admin
       { path: "/admin", element: <AdminGuard><AdminDashboard /></AdminGuard> },
@@ -117,22 +181,26 @@ function AppRoutes() {
       { path: "/admin/seo", element: <AdminGuard><AdminSEO /></AdminGuard> },
       { path: "/admin/analytics", element: <AdminGuard><AdminAnalytics /></AdminGuard> },
       { path: "/admin/users", element: <AdminGuard><AdminUsers /></AdminGuard> },
+      { path: "/admin/roles", element: <AdminGuard><AdminRoles /></AdminGuard> },
+      { path: "/admin/leads", element: <AdminGuard><AdminLeads /></AdminGuard> },
       { path: "/admin/notifications", element: <AdminGuard><AdminNotifications /></AdminGuard> },
       { path: "/admin/audit", element: <AdminGuard><AdminAuditLog /></AdminGuard> },
-      { path: "/admin/leads", element: <AdminGuard><AdminLeads /></AdminGuard> },
-      { path: "/admin/roles", element: <AdminGuard><AdminRoles /></AdminGuard> },
+      { path: "/admin/calendar", element: <AdminGuard><AdminCalendar /></AdminGuard> },
+      { path: "/admin/booking-settings", element: <AdminGuard><AdminBookingSettings /></AdminGuard> },
 
       { path: "*", element: <NotFound /> },
-    ])} />
-  );
-}
+    ],
+  },
+]);
+
+// ── Root ──────────────────────────────────────────────────────────────────
 
 export default function App() {
   return (
     <AppProvider>
       <ToastProvider>
         <AdminProvider>
-          <AppRoutes />
+          <RouterProvider router={router} />
         </AdminProvider>
       </ToastProvider>
     </AppProvider>

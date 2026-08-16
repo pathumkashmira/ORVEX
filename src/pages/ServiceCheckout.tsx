@@ -1,30 +1,223 @@
-import { useState, useEffect } from "react";
-import { useSearchParams, Link } from "react-router-dom";
-import { ArrowRight, ChevronLeft, Check, Shield, Wallet, Copy, ExternalLink, AlertTriangle, Loader } from "lucide-react";
+import { useState, useRef, useCallback, useEffect } from "react";
+import { useSearchParams, useNavigate } from "react-router-dom";
+import {
+  Check, ChevronLeft, Shield, AlertTriangle, Loader,
+  Upload, X, Copy, Wallet, ExternalLink, ArrowRight,
+} from "lucide-react";
 import Layout from "@/components/Layout";
-import { services } from "@/data/seed";
+import { useAdmin } from "@/contexts/AdminContext";
+import { useToast } from "@/contexts/ToastContext";
+import { processPayment, type PaymentMethodType, type PaymentType } from "@/services/paymentService";
+import {
+  buildOrderRecords, getRequirementFields, getAddonsForService, computeAddonPrice,
+  type RequirementField,
+} from "@/services/orderService";
+import type { Service, ServicePackage } from "@/data/seed";
 
-/* ── Types ─────────────────────────────────────────── */
-declare global {
-  interface Window {
-    ethereum?: {
-      request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
-      on: (event: string, handler: (...args: unknown[]) => void) => void;
-      removeListener: (event: string, handler: (...args: unknown[]) => void) => void;
-      isMetaMask?: boolean;
-    };
-  }
+// ── Step definitions ────────────────────────────────────────────────────────
+
+type Step = "service" | "package" | "requirements" | "addons" | "timeline" | "details" | "summary" | "payment" | "processing";
+
+const STEPS: Step[] = ["service", "package", "requirements", "addons", "timeline", "details", "summary", "payment", "processing"];
+const STEP_LABELS = ["Service", "Package", "Requirements", "Add-ons", "Timeline", "Details", "Summary", "Payment"];
+
+// ── Progress bar ────────────────────────────────────────────────────────────
+
+function Progress({ current }: { current: Step }) {
+  const idx = STEPS.indexOf(current);
+  const visible = STEPS.slice(0, 8);
+  return (
+    <div style={{
+      borderBottom: "1px solid rgba(255,255,255,0.05)",
+      padding: "0 clamp(24px,5vw,64px)",
+      background: "#080a0c",
+    }}>
+      <div style={{ maxWidth: 1200, margin: "0 auto", padding: "16px 0", overflowX: "auto" }}>
+        <div style={{ display: "flex", alignItems: "center", minWidth: "max-content", gap: 0 }}>
+          {visible.map((s, i) => {
+            const done = i < idx;
+            const active = i === idx;
+            return (
+              <div key={s} style={{ display: "flex", alignItems: "center" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{
+                    width: 22, height: 22, border: `1px solid ${done || active ? "#ff5a00" : "rgba(255,255,255,0.12)"}`,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    background: done ? "#ff5a00" : "transparent",
+                    flexShrink: 0,
+                  }}>
+                    {done
+                      ? <Check size={10} color="#000" strokeWidth={3} />
+                      : <span style={{ fontSize: 9, color: active ? "#ff5a00" : "rgba(255,255,255,0.25)", fontWeight: 700, fontFamily: "'Space Grotesk', sans-serif" }}>{i + 1}</span>
+                    }
+                  </div>
+                  <span style={{
+                    fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 700,
+                    fontFamily: "'Space Grotesk', sans-serif",
+                    color: done ? "#ff5a00" : active ? "#f5f7f8" : "rgba(255,255,255,0.2)",
+                  }}>
+                    {STEP_LABELS[i]}
+                  </span>
+                </div>
+                {i < visible.length - 1 && (
+                  <div style={{ width: 32, height: 1, margin: "0 12px", background: done ? "rgba(255,90,0,0.4)" : "rgba(255,255,255,0.08)" }} />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
 }
 
-/* ── Constants ─────────────────────────────────────── */
-const STEPS = ["SERVICE", "PROJECT DETAILS", "CUSTOMER", "ADD-ONS", "PAYMENT", "CONFIRMATION"];
+// ── Order summary sidebar ───────────────────────────────────────────────────
 
-const ADD_ONS = [
-  { id: "rush", label: "Rush Delivery", desc: "50% timeline reduction", price: 0.5, unit: "%" },
-  { id: "source", label: "Source Files", desc: "Full project source files", price: 500, unit: "flat" },
-  { id: "extra-rev", label: "Extra Revision Rounds", desc: "2 additional revision rounds", price: 350, unit: "flat" },
-  { id: "usage", label: "Extended License", desc: "Broadcast + global unlimited use", price: 800, unit: "flat" },
-];
+interface SummaryProps {
+  service?: Service;
+  pkg?: ServicePackage;
+  selectedAddons: Array<{ id: string; label: string; price: number }>;
+  paymentType: PaymentType;
+  depositPct: number;
+}
+
+function OrderSummary({ service, pkg, selectedAddons, paymentType, depositPct }: SummaryProps) {
+  const addonTotal = selectedAddons.reduce((s, a) => s + a.price, 0);
+  const subtotal = (pkg?.price ?? 0) + addonTotal;
+  const depositAmount = paymentType === "full" ? subtotal : Math.round(subtotal * depositPct) / 100;
+
+  return (
+    <div style={{ position: "sticky", top: 100, background: "#0d0f12", border: "1px solid rgba(255,255,255,0.06)" }}>
+      <div style={{ padding: "20px 20px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+        <p style={labelStyle}>Order summary</p>
+      </div>
+      <div style={{ padding: 20 }}>
+        {service ? (
+          <p style={{ fontSize: 14, fontWeight: 600, color: "#f5f7f8", marginBottom: 2 }}>{service.title}</p>
+        ) : (
+          <p style={{ fontSize: 13, color: "rgba(255,255,255,0.2)" }}>Select a service</p>
+        )}
+        {pkg && (
+          <p style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 16 }}>
+            {pkg.name} · {pkg.duration}
+          </p>
+        )}
+
+        {pkg && (
+          <div style={{ borderTop: "1px solid rgba(255,255,255,0.04)", paddingTop: 16, marginBottom: 16 }}>
+            <Row label="Package" value={`$${pkg.price.toLocaleString()}`} />
+            {selectedAddons.map((a) => (
+              <Row key={a.id} label={a.label} value={`+$${a.price.toLocaleString()}`} />
+            ))}
+            <div style={{ borderTop: "1px solid rgba(255,255,255,0.04)", marginTop: 12, paddingTop: 12 }}>
+              <Row label="Subtotal" value={`$${subtotal.toLocaleString()}`} />
+              {paymentType === "deposit" && (
+                <>
+                  <Row label={`Deposit (${depositPct}%)`} value={`$${depositAmount.toLocaleString()}`} accent />
+                  <Row label="Balance on delivery" value={`$${(subtotal - depositAmount).toLocaleString()}`} muted />
+                </>
+              )}
+              {paymentType === "full" && (
+                <Row label="Total due today" value={`$${subtotal.toLocaleString()}`} accent />
+              )}
+              {paymentType === "quote" && (
+                <p style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 8, lineHeight: 1.5 }}>
+                  No payment required — we will send a custom quote within 48 hours.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {pkg && (
+          <div style={{ borderTop: "1px solid rgba(255,255,255,0.04)", paddingTop: 16 }}>
+            <p style={{ ...labelStyle, marginBottom: 8 }}>Package features</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+              {pkg.features.map((f) => (
+                <div key={f} style={{ display: "flex", alignItems: "flex-start", gap: 7 }}>
+                  <Check size={9} color="#ff5a00" style={{ marginTop: 3, flexShrink: 0 }} />
+                  <span style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>{f}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div style={{ marginTop: 20, display: "flex", alignItems: "center", gap: 7 }}>
+          <Shield size={10} color="rgba(255,255,255,0.2)" />
+          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.2)", lineHeight: 1.5 }}>
+            {paymentType === "full" ? "100% payment. Fully refundable within 48h." : "50% deposit protects your slot."}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Row({ label, value, accent, muted }: { label: string; value: string; accent?: boolean; muted?: boolean }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+      <span style={{ fontSize: 12, color: muted ? "rgba(255,255,255,0.25)" : "rgba(255,255,255,0.45)" }}>{label}</span>
+      <span style={{ fontSize: 12, fontWeight: accent ? 700 : 400, color: accent ? "#ff5a00" : muted ? "rgba(255,255,255,0.25)" : "#f5f7f8" }}>{value}</span>
+    </div>
+  );
+}
+
+// ── File upload zone ────────────────────────────────────────────────────────
+
+function FileUpload({ files, onAdd, onRemove }: { files: File[]; onAdd: (f: File[]) => void; onRemove: (i: number) => void }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragging(false);
+    onAdd(Array.from(e.dataTransfer.files));
+  }, [onAdd]);
+
+  const fmt = (bytes: number) => bytes < 1e6 ? `${(bytes / 1024).toFixed(0)} KB` : `${(bytes / 1e6).toFixed(1)} MB`;
+
+  return (
+    <div>
+      <div
+        onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={handleDrop}
+        onClick={() => inputRef.current?.click()}
+        style={{
+          border: `1px dashed ${dragging ? "#ff5a00" : "rgba(255,255,255,0.12)"}`,
+          padding: "32px 24px", textAlign: "center", cursor: "pointer",
+          background: dragging ? "rgba(255,90,0,0.04)" : "transparent",
+          transition: "all 0.15s",
+        }}
+      >
+        <Upload size={18} color={dragging ? "#ff5a00" : "rgba(255,255,255,0.25)"} style={{ margin: "0 auto 12px" }} />
+        <p style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", marginBottom: 4 }}>
+          Drag files here or <span style={{ color: "#ff5a00" }}>browse</span>
+        </p>
+        <p style={{ fontSize: 11, color: "rgba(255,255,255,0.2)" }}>
+          Brand guidelines, references, existing 3D files, CAD — up to 100 MB each
+        </p>
+        <input ref={inputRef} type="file" multiple style={{ display: "none" }} onChange={(e) => e.target.files && onAdd(Array.from(e.target.files))} />
+      </div>
+      {files.length > 0 && (
+        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+          {files.map((f, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: "#0d0f12", border: "1px solid rgba(255,255,255,0.06)" }}>
+              <span style={{ fontSize: 12, color: "#f5f7f8", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", flexShrink: 0 }}>{fmt(f.size)}</span>
+              <button onClick={() => onRemove(i)} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.3)", padding: 2, display: "flex" }}>
+                <X size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Crypto payment panel (reused from existing) ─────────────────────────────
 
 const CRYPTO_TOKENS = [
   { symbol: "ETH", name: "Ethereum", rate: 3420, decimals: 6, logo: "Ξ" },
@@ -33,707 +226,938 @@ const CRYPTO_TOKENS = [
   { symbol: "DAI", name: "Dai", rate: 1, decimals: 2, logo: "◈" },
 ];
 
-const PAYMENT_METHODS = ["Credit / Debit Card", "Bank Transfer", "Crypto Wallet"] as const;
-type PaymentMethod = (typeof PAYMENT_METHODS)[number];
-
 type WalletState = "idle" | "connecting" | "connected" | "sending" | "sent" | "error";
 
-/* ── Crypto panel ───────────────────────────────────── */
-function CryptoPaymentPanel({
-  depositUsd,
-  onSuccess,
-}: {
-  depositUsd: number;
-  onSuccess: (txHash: string, walletAddress: string, token: string) => void;
-}) {
+function CryptoPanel({ amountUsd, onSuccess }: { amountUsd: number; onSuccess: () => void }) {
   const [token, setToken] = useState(CRYPTO_TOKENS[0]);
-  const [walletState, setWalletState] = useState<WalletState>("idle");
-  const [walletAddress, setWalletAddress] = useState<string>("");
-  const [txHash, setTxHash] = useState<string>("");
-  const [error, setError] = useState<string>("");
+  const [ws, setWs] = useState<WalletState>("idle");
+  const [addr, setAddr] = useState("");
+  const [txHash, setTxHash] = useState("");
+  const [err, setErr] = useState("");
   const [copied, setCopied] = useState(false);
+  const ORVEX_WALLET = "0xA1B2C3D4E5F6789012345678901234567890ABCD";
+  const cryptoAmt = (amountUsd / token.rate).toFixed(token.decimals);
+  const hasWallet = typeof window !== "undefined" && Boolean((window as any).ethereum);
+  const short = (a: string) => a ? `${a.slice(0, 6)}…${a.slice(-4)}` : "";
 
-  const cryptoAmount = (depositUsd / token.rate).toFixed(token.decimals);
-  const hasWallet = typeof window !== "undefined" && Boolean(window.ethereum);
-
-  /* Truncate address for display */
-  const shortAddr = (addr: string) =>
-    addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : "";
-
-  /* Mock tx hash generator */
-  const mockTxHash = () =>
-    "0x" + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
-
-  /* Connect wallet */
-  const connectWallet = async () => {
-    if (!window.ethereum) return;
-    setWalletState("connecting");
-    setError("");
+  async function connect() {
+    const eth = (window as any).ethereum;
+    if (!eth) return;
+    setWs("connecting"); setErr("");
     try {
-      const accounts = (await window.ethereum.request({ method: "eth_requestAccounts" })) as string[];
-      if (accounts[0]) {
-        setWalletAddress(accounts[0]);
-        setWalletState("connected");
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Connection rejected.";
-      setError(msg.includes("rejected") ? "Connection rejected by user." : msg);
-      setWalletState("error");
+      const accounts = await eth.request({ method: "eth_requestAccounts" }) as string[];
+      setAddr(accounts[0]); setWs("connected");
+    } catch (e: any) {
+      setErr(e.message?.includes("rejected") ? "Connection rejected." : (e.message ?? "Error"));
+      setWs("error");
     }
-  };
+  }
 
-  /* Send payment (simulated — no real on-chain tx in demo) */
-  const sendPayment = async () => {
-    setWalletState("sending");
-    setError("");
+  async function send() {
+    setWs("sending");
     await new Promise((r) => setTimeout(r, 2200));
-    const hash = mockTxHash();
-    setTxHash(hash);
-    setWalletState("sent");
-    onSuccess(hash, walletAddress, token.symbol);
-  };
+    setTxHash("0x" + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join(""));
+    setWs("sent");
+    onSuccess();
+  }
 
-  const copyAddress = (text: string) => {
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
-    });
-  };
-
-  /* No wallet installed */
-  if (!hasWallet) {
-    return (
-      <div className="border border-[#ff5a00]/20 bg-[#ff5a00]/04 p-6 mt-4">
-        <div className="flex items-start gap-3 mb-5">
-          <AlertTriangle size={16} className="text-[#ff5a00] mt-0.5 flex-shrink-0" />
-          <div>
-            <p className="font-700 text-[#f5f7f8] text-sm mb-1" style={{ fontWeight: 700 }}>No wallet detected</p>
-            <p className="text-[#bfc5cc] text-xs leading-relaxed">
-              Install a Web3 wallet to pay with crypto. We support MetaMask, Coinbase Wallet, Rabby, and any EIP-1193 compatible wallet.
-            </p>
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-3">
-          <a
-            href="https://metamask.io/download"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn-primary text-xs py-2.5 px-5 flex items-center gap-2"
-          >
-            INSTALL METAMASK <ExternalLink size={11} />
-          </a>
-          <a
-            href="https://www.coinbase.com/wallet"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn-secondary text-xs py-2.5 px-5 flex items-center gap-2"
-          >
-            COINBASE WALLET <ExternalLink size={11} />
-          </a>
-        </div>
-      </div>
-    );
+  function copy(t: string) {
+    navigator.clipboard.writeText(t).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1800); });
   }
 
   return (
-    <div className="mt-4 space-y-5">
+    <div style={{ marginTop: 20 }}>
       {/* Token selector */}
-      <div>
-        <p className="orvex-label mb-3">Select token</p>
-        <div className="grid grid-cols-4 gap-2">
-          {CRYPTO_TOKENS.map((t) => (
-            <button
-              key={t.symbol}
-              onClick={() => setToken(t)}
-              className={`p-3 border text-center transition-all ${
-                token.symbol === t.symbol
-                  ? "border-[#ff5a00] bg-[#ff5a00]/08"
-                  : "border-white/10 hover:border-white/25"
-              }`}
-            >
-              <p className="text-lg mb-0.5">{t.logo}</p>
-              <p className="label-sm text-[#f5f7f8]">{t.symbol}</p>
-            </button>
-          ))}
-        </div>
+      <p style={{ ...labelStyle, marginBottom: 10 }}>Select token</p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, marginBottom: 20 }}>
+        {CRYPTO_TOKENS.map((t) => (
+          <button key={t.symbol} onClick={() => setToken(t)} style={{
+            padding: "12px 8px", border: `1px solid ${token.symbol === t.symbol ? "#ff5a00" : "rgba(255,255,255,0.08)"}`,
+            background: token.symbol === t.symbol ? "rgba(255,90,0,0.06)" : "transparent",
+            cursor: "pointer", textAlign: "center",
+          }}>
+            <p style={{ fontSize: 16, marginBottom: 2 }}>{t.logo}</p>
+            <p style={{ fontSize: 10, fontWeight: 700, color: "#f5f7f8", letterSpacing: "0.08em" }}>{t.symbol}</p>
+          </button>
+        ))}
       </div>
 
-      {/* Amount due */}
-      <div className="bg-[#14171b] border border-white/8 p-5">
-        <div className="flex items-start justify-between mb-3">
-          <p className="label-sm text-[#bfc5cc]/50">DEPOSIT DUE</p>
-          <div className="text-right">
-            <p className="text-2xl font-700 text-[#f5f7f8]" style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700 }}>
-              {cryptoAmount} <span className="text-[#ff5a00]">{token.symbol}</span>
+      {/* Amount */}
+      <div style={{ background: "#0d0f12", border: "1px solid rgba(255,255,255,0.06)", padding: 20, marginBottom: 20 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <p style={{ ...labelStyle }}>Due now</p>
+          <div style={{ textAlign: "right" }}>
+            <p style={{ fontSize: 24, fontWeight: 700, color: "#f5f7f8", fontFamily: "'Space Grotesk', sans-serif" }}>
+              {cryptoAmt} <span style={{ color: "#ff5a00" }}>{token.symbol}</span>
             </p>
-            <p className="label-sm text-[#bfc5cc]/40 mt-1">≈ ${depositUsd.toLocaleString()} USD</p>
+            <p style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 2 }}>≈ ${amountUsd.toLocaleString()} USD</p>
           </div>
         </div>
-        {token.symbol === "ETH" && (
-          <p className="text-[#bfc5cc]/40 text-xs">
-            Rate: 1 ETH ≈ ${token.rate.toLocaleString()} USD · Rates are indicative and may differ at settlement.
-          </p>
-        )}
       </div>
 
-      {/* ORVEX wallet address to send to */}
-      <div>
-        <p className="orvex-label mb-2">Send to ORVEX wallet</p>
-        <div className="flex items-center gap-0 border border-white/8 bg-[#14171b]">
-          <p className="flex-1 px-4 py-3 text-[#bfc5cc] text-xs font-mono truncate">
-            0xA1B2C3D4E5F6789012345678901234567890ABCD
+      {/* ORVEX address */}
+      <div style={{ marginBottom: 20 }}>
+        <p style={{ ...labelStyle, marginBottom: 8 }}>Send to ORVEX wallet</p>
+        <div style={{ display: "flex", border: "1px solid rgba(255,255,255,0.06)", background: "#0d0f12" }}>
+          <p style={{ flex: 1, padding: "12px 14px", fontSize: 11, color: "rgba(255,255,255,0.5)", fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {ORVEX_WALLET}
           </p>
-          <button
-            onClick={() => copyAddress("0xA1B2C3D4E5F6789012345678901234567890ABCD")}
-            className="px-4 py-3 border-l border-white/8 text-[#bfc5cc]/50 hover:text-[#ff5a00] transition-colors"
-            title="Copy address"
-          >
-            {copied ? <Check size={13} className="text-[#ff5a00]" /> : <Copy size={13} />}
+          <button onClick={() => copy(ORVEX_WALLET)} style={{ padding: "12px 14px", background: "none", border: "none", borderLeft: "1px solid rgba(255,255,255,0.06)", cursor: "pointer", color: copied ? "#ff5a00" : "rgba(255,255,255,0.3)" }}>
+            {copied ? <Check size={12} /> : <Copy size={12} />}
           </button>
         </div>
-        <p className="text-[#bfc5cc]/35 text-xs mt-1.5">ERC-20 / Ethereum mainnet only</p>
+        <p style={{ fontSize: 10, color: "rgba(255,255,255,0.2)", marginTop: 4 }}>ERC-20 / Ethereum mainnet only</p>
       </div>
 
-      {/* Error */}
-      {error && (
-        <div className="flex items-center gap-3 border border-red-500/20 bg-red-500/05 p-4">
-          <AlertTriangle size={13} className="text-red-400 flex-shrink-0" />
-          <p className="text-red-400 text-xs">{error}</p>
-        </div>
-      )}
-
-      {/* Wallet connection & pay button */}
-      {walletState === "idle" || walletState === "error" ? (
-        <button onClick={connectWallet} className="btn-primary w-full justify-center">
-          <Wallet size={14} /> CONNECT WALLET
-        </button>
-      ) : walletState === "connecting" ? (
-        <div className="btn-primary w-full justify-center opacity-70 cursor-wait">
-          <Loader size={14} className="animate-spin" /> CONNECTING…
-        </div>
-      ) : walletState === "connected" ? (
-        <div className="space-y-3">
-          <div className="flex items-center gap-3 border border-[#ff5a00]/20 bg-[#ff5a00]/04 p-4">
-            <div className="w-2 h-2 rounded-full bg-[#ff5a00] animate-pulse flex-shrink-0" />
-            <div className="flex-1 min-w-0">
-              <p className="label-sm text-[#bfc5cc]/50">CONNECTED</p>
-              <p className="text-[#f5f7f8] text-xs mt-0.5 font-mono truncate">{shortAddr(walletAddress)}</p>
+      {!hasWallet && (
+        <div style={{ border: "1px solid rgba(255,90,0,0.2)", background: "rgba(255,90,0,0.04)", padding: 16, marginBottom: 16 }}>
+          <div style={{ display: "flex", gap: 10, alignItems: "flex-start", marginBottom: 12 }}>
+            <AlertTriangle size={14} color="#ff5a00" style={{ flexShrink: 0, marginTop: 1 }} />
+            <div>
+              <p style={{ fontSize: 13, fontWeight: 600, color: "#f5f7f8", marginBottom: 4 }}>No wallet detected</p>
+              <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", lineHeight: 1.6 }}>
+                Install MetaMask or a compatible EIP-1193 wallet to continue.
+              </p>
             </div>
-            <button
-              onClick={() => { setWalletAddress(""); setWalletState("idle"); }}
-              className="label-sm text-[#bfc5cc]/40 hover:text-red-400 transition-colors flex-shrink-0"
-            >
-              DISCONNECT
-            </button>
           </div>
-          <button onClick={sendPayment} className="btn-primary w-full justify-center">
-            <Wallet size={14} /> PAY {cryptoAmount} {token.symbol}
-          </button>
-        </div>
-      ) : walletState === "sending" ? (
-        <div className="space-y-3">
-          <div className="flex items-center gap-3 border border-[#ff5a00]/20 p-4">
-            <div className="w-2 h-2 rounded-full bg-[#ff5a00] animate-pulse flex-shrink-0" />
-            <p className="label-sm text-[#bfc5cc]/50">CONNECTED · {shortAddr(walletAddress)}</p>
-          </div>
-          <div className="btn-primary w-full justify-center opacity-70 cursor-wait">
-            <Loader size={14} className="animate-spin" /> SENDING TRANSACTION…
-          </div>
-        </div>
-      ) : (
-        <div className="border border-[#ff5a00]/20 bg-[#ff5a00]/05 p-5">
-          <div className="flex items-center gap-3 mb-3">
-            <Check size={16} className="text-[#ff5a00]" />
-            <p className="font-700 text-[#f5f7f8] text-sm" style={{ fontWeight: 700 }}>Transaction broadcast</p>
-          </div>
-          <p className="text-[#bfc5cc] text-xs mb-2">
-            {cryptoAmount} {token.symbol} sent from {shortAddr(walletAddress)}
-          </p>
-          <div className="flex items-center gap-2">
-            <p className="text-[#bfc5cc]/40 text-xs font-mono truncate">{txHash.slice(0, 30)}…</p>
-            <button onClick={() => copyAddress(txHash)} className="text-[#bfc5cc]/40 hover:text-[#ff5a00] transition-colors flex-shrink-0">
-              <Copy size={10} />
-            </button>
+          <div style={{ display: "flex", gap: 10 }}>
+            <a href="https://metamask.io/download" target="_blank" rel="noopener noreferrer" style={{ ...btnPrimary, textDecoration: "none", fontSize: 11, padding: "8px 16px", display: "flex", alignItems: "center", gap: 6 }}>
+              METAMASK <ExternalLink size={10} />
+            </a>
           </div>
         </div>
       )}
 
-      <div className="flex items-start gap-2 text-[#bfc5cc]/40 text-xs">
-        <Shield size={11} className="mt-0.5 flex-shrink-0" />
-        <span>
-          Demo mode — no real transaction occurs. In production, payment is verified on-chain before order is confirmed.
-          All wallet interactions happen client-side; ORVEX never has access to your private keys.
-        </span>
+      {err && (
+        <div style={{ border: "1px solid rgba(248,81,73,0.2)", background: "rgba(248,81,73,0.05)", padding: 12, display: "flex", gap: 10, alignItems: "center", marginBottom: 16 }}>
+          <AlertTriangle size={12} color="#f85149" />
+          <span style={{ fontSize: 12, color: "#f85149" }}>{err}</span>
+        </div>
+      )}
+
+      {ws === "sent" ? (
+        <div style={{ border: "1px solid rgba(255,90,0,0.2)", background: "rgba(255,90,0,0.04)", padding: 16 }}>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 8 }}>
+            <Check size={14} color="#ff5a00" />
+            <p style={{ fontSize: 13, fontWeight: 700, color: "#f5f7f8" }}>Transaction broadcast</p>
+          </div>
+          <p style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", fontFamily: "monospace" }}>{txHash.slice(0, 34)}…</p>
+        </div>
+      ) : ws === "connected" ? (
+        <div>
+          <div style={{ padding: 12, border: "1px solid rgba(255,90,0,0.15)", background: "rgba(255,90,0,0.04)", marginBottom: 12, display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#ff5a00" }} />
+            <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", fontFamily: "monospace" }}>{short(addr)}</span>
+            <button onClick={() => { setAddr(""); setWs("idle"); }} style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", fontSize: 11, color: "rgba(255,255,255,0.3)" }}>DISCONNECT</button>
+          </div>
+          <button onClick={send} style={{ ...btnPrimary, width: "100%", justifyContent: "center" }}>
+            <Wallet size={13} /> PAY {cryptoAmt} {token.symbol}
+          </button>
+        </div>
+      ) : ws === "connecting" || ws === "sending" ? (
+        <div style={{ ...btnPrimary, width: "100%", justifyContent: "center", opacity: 0.7, cursor: "wait" }}>
+          <Loader size={13} style={{ animation: "spin 1s linear infinite" }} />
+          {ws === "connecting" ? "CONNECTING…" : "SENDING…"}
+        </div>
+      ) : hasWallet ? (
+        <button onClick={connect} style={{ ...btnPrimary, width: "100%", justifyContent: "center" }}>
+          <Wallet size={13} /> CONNECT WALLET
+        </button>
+      ) : null}
+
+      <div style={{ display: "flex", gap: 8, marginTop: 16, color: "rgba(255,255,255,0.2)", fontSize: 10, lineHeight: 1.6 }}>
+        <Shield size={10} style={{ flexShrink: 0, marginTop: 2 }} />
+        <span>Demo mode — no real transaction. ORVEX never accesses private keys. Verification is on-chain in production.</span>
       </div>
     </div>
   );
 }
 
-/* ── Main Checkout ──────────────────────────────────── */
-export default function ServiceCheckout() {
-  const [params] = useSearchParams();
-  const serviceId = params.get("service") ?? "1";
-  const packageId = params.get("package");
-  const service = services.find((s) => s.id === serviceId) ?? services[0];
-  const [selectedPkg, setSelectedPkg] = useState(packageId ?? service.packages[1]?.id ?? service.packages[0]?.id ?? "");
-  const [step, setStep] = useState(1);
-  const [addons, setAddons] = useState<string[]>([]);
-  const [projectForm, setProjectForm] = useState({ description: "", objectives: "", references: "", dimensions: "", deadline: "", budget: "", style: "", platform: "" });
-  const [custForm, setCustForm] = useState({ name: "", company: "", email: "", phone: "", country: "" });
-  const [payMethod, setPayMethod] = useState<PaymentMethod>("Credit / Debit Card");
-  const [cryptoTx, setCryptoTx] = useState<{ hash: string; address: string; token: string } | null>(null);
-  const [confirmed, setConfirmed] = useState(false);
+// ── Requirement field renderer ─────────────────────────────────────────────
 
-  const pkg = service.packages.find((p) => p.id === selectedPkg);
-  const pkgPrice = pkg?.price ?? 0;
-  const addonTotal = addons.reduce((sum, id) => {
-    const a = ADD_ONS.find((ao) => ao.id === id);
-    if (!a) return sum;
-    return sum + (a.unit === "%" ? pkgPrice * a.price : a.price);
-  }, 0);
-  const subtotal = pkgPrice + addonTotal;
-  const deposit = subtotal * 0.5;
-
-  const toggleAddon = (id: string) =>
-    setAddons((prev) => (prev.includes(id) ? prev.filter((a) => a !== id) : [...prev, id]));
-  const setProject =
-    (k: keyof typeof projectForm) =>
-    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
-      setProjectForm((f) => ({ ...f, [k]: e.target.value }));
-  const setCust =
-    (k: keyof typeof custForm) =>
-    (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
-      setCustForm((f) => ({ ...f, [k]: e.target.value }));
-
-  const orderId = `ORVEX-ORD-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 9999)).padStart(4, "0")}`;
-
-  const handleCryptoSuccess = (hash: string, address: string, token: string) => {
-    setCryptoTx({ hash, address, token });
-    setConfirmed(true);
+function RequirementInput({
+  field, value, onChange,
+}: { field: RequirementField; value: string; onChange: (v: string) => void }) {
+  const inputBase: React.CSSProperties = {
+    width: "100%", background: "transparent", border: "1px solid rgba(255,255,255,0.08)",
+    color: "#f5f7f8", fontSize: 13, padding: "12px 14px", outline: "none",
+    fontFamily: "'Inter', sans-serif", boxSizing: "border-box",
   };
 
-  const canProceedFromPayment = payMethod === "Crypto Wallet" ? Boolean(cryptoTx) : true;
+  return (
+    <div>
+      <label style={{ ...labelStyle, marginBottom: 8, display: "block" }}>
+        {field.label}{field.required && <span style={{ color: "#ff5a00" }}> *</span>}
+      </label>
+      {field.hint && <p style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginBottom: 8 }}>{field.hint}</p>}
 
-  /* ── Confirmation screen ──────────────────────────── */
-  if (confirmed) {
+      {field.type === "textarea" && (
+        <textarea
+          value={value} onChange={(e) => onChange(e.target.value)}
+          placeholder={field.placeholder} rows={4}
+          style={{ ...inputBase, resize: "vertical" }}
+        />
+      )}
+      {field.type === "text" && (
+        <input type="text" value={value} onChange={(e) => onChange(e.target.value)} placeholder={field.placeholder} style={inputBase} />
+      )}
+      {field.type === "select" && field.options && (
+        <select value={value} onChange={(e) => onChange(e.target.value)} style={{ ...inputBase, cursor: "pointer" }}>
+          <option value="">Select…</option>
+          {field.options.map((o) => <option key={o} value={o}>{o}</option>)}
+        </select>
+      )}
+      {field.type === "radio" && field.options && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {field.options.map((o) => (
+            <button
+              key={o}
+              onClick={() => onChange(o)}
+              style={{
+                display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", textAlign: "left",
+                border: `1px solid ${value === o ? "#ff5a00" : "rgba(255,255,255,0.08)"}`,
+                background: value === o ? "rgba(255,90,0,0.05)" : "transparent",
+                cursor: "pointer", transition: "all 0.15s",
+              }}
+            >
+              <div style={{
+                width: 14, height: 14, borderRadius: "50%", border: `1px solid ${value === o ? "#ff5a00" : "rgba(255,255,255,0.2)"}`,
+                background: value === o ? "#ff5a00" : "transparent", flexShrink: 0,
+              }} />
+              <span style={{ fontSize: 13, color: value === o ? "#f5f7f8" : "rgba(255,255,255,0.5)" }}>{o}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Main Checkout ───────────────────────────────────────────────────────────
+
+export default function ServiceCheckout() {
+  const [params] = useSearchParams();
+  const navigate = useNavigate();
+  const { services, settings, orders_, invoices_, payments_, projects_ } = useAdmin();
+  const { toast } = useToast();
+
+  const preService = params.get("service") ?? "";
+  const prePkg = params.get("package") ?? "";
+
+  // Step state
+  const [step, setStep] = useState<Step>(preService ? "package" : "service");
+
+  // Selections
+  const [serviceId, setServiceId] = useState(preService);
+  const [pkgId, setPkgId] = useState(prePkg);
+  const [requirements, setRequirements] = useState<Record<string, string>>({});
+  const [files, setFiles] = useState<File[]>([]);
+  const [selectedAddonIds, setSelectedAddonIds] = useState<string[]>([]);
+  const [preferredStartDate, setPreferredStartDate] = useState("");
+  const [timelineUrgency, setTimelineUrgency] = useState<"standard" | "expedited" | "rush">("standard");
+  const [notes, setNotes] = useState("");
+  const [paymentType, setPaymentType] = useState<PaymentType>("deposit");
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethodType>("card");
+  const [details, setDetails] = useState({ name: "", email: "", phone: "", company: "", country: "" });
+  const [cryptoPaid, setCryptoPaid] = useState(false);
+  const [processing, setProcessing] = useState(false);
+  const [confirmedOrderId, setConfirmedOrderId] = useState<string | null>(null);
+
+  const service = services.find((s) => s.id === serviceId && s.visible);
+  const pkg = service?.packages.find((p) => p.id === pkgId);
+  const reqFields = service ? getRequirementFields(service.id) : [];
+  const availableAddons = service ? getAddonsForService(service.id) : [];
+
+  const selectedAddons = selectedAddonIds.map((id) => {
+    const addon = availableAddons.find((a) => a.id === id)!;
+    return { id, label: addon.label, price: computeAddonPrice(addon, pkg?.price ?? 0) };
+  });
+
+  const addonTotal = selectedAddons.reduce((s, a) => s + a.price, 0);
+  const subtotal = (pkg?.price ?? 0) + addonTotal;
+  const depositPct = settings.depositPercent ?? 50;
+  const depositAmount = paymentType === "full" ? subtotal : Math.round(subtotal * depositPct) / 100;
+
+  function toggleAddon(id: string) {
+    setSelectedAddonIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+  }
+
+  function addFiles(newFiles: File[]) {
+    setFiles((prev) => [...prev, ...newFiles]);
+  }
+
+  function removeFile(idx: number) {
+    setFiles((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  const goTo = (s: Step) => setStep(s);
+  const back = () => {
+    const idx = STEPS.indexOf(step);
+    if (idx > 0) setStep(STEPS[idx - 1] as Step);
+  };
+
+  // Validate current step before proceeding
+  function canAdvance(): boolean {
+    if (step === "service") return !!serviceId;
+    if (step === "package") return !!pkgId;
+    if (step === "requirements") {
+      return reqFields.filter((f) => f.required).every((f) => !!requirements[f.key]?.trim());
+    }
+    if (step === "details") return !!(details.name && details.email);
+    if (step === "payment") {
+      if (paymentType === "quote") return true;
+      if (paymentMethod === "crypto") return cryptoPaid;
+      return true;
+    }
+    return true;
+  }
+
+  async function handlePlaceOrder() {
+    if (!service || !pkg) return;
+    setProcessing(true);
+    setStep("processing");
+
+    const payIntent = {
+      orderId: "temp",
+      amount: paymentType === "quote" ? 0 : depositAmount * 100,
+      currency: "USD",
+      method: paymentMethod,
+      paymentType,
+      customerEmail: details.email,
+      customerName: details.name,
+      metadata: { serviceId: service.id, packageId: pkg.id },
+    };
+
+    const payResult = await processPayment(payIntent);
+
+    if (!payResult.success && paymentType !== "quote") {
+      toast.error("Payment failed", payResult.error ?? "Please try again");
+      setStep("payment");
+      setProcessing(false);
+      return;
+    }
+
+    const { order, invoice, payment, project } = buildOrderRecords({
+      customerName: details.name,
+      customerEmail: details.email,
+      customerPhone: details.phone,
+      customerCompany: details.company,
+      service,
+      packageId: pkg.id,
+      packageName: pkg.name,
+      packagePrice: pkg.price,
+      addons: selectedAddons,
+      customRequirements: requirements,
+      attachments: files.map((f) => f.name),
+      preferredStartDate,
+      timelineUrgency,
+      notes,
+      paymentType,
+      paymentMethod,
+      paymentResult: payResult,
+      taxRate: settings.taxRate,
+      depositPercent: depositPct,
+      autoCreateProject: paymentType !== "quote",
+    });
+
+    orders_.add(order);
+    invoices_.add(invoice);
+    payments_.add(payment);
+    if (project) projects_.add(project);
+
+    setConfirmedOrderId(order.orderId);
+    setProcessing(false);
+    navigate(`/order/${encodeURIComponent(order.orderId)}`);
+  }
+
+  // ── Processing screen
+  if (step === "processing") {
     return (
       <Layout>
-        <section className="min-h-screen flex items-center justify-center px-8 py-32">
-          <div className="text-center max-w-lg">
-            <div className="w-16 h-16 border border-[#ff5a00] flex items-center justify-center mx-auto mb-10">
-              <Check size={24} className="text-[#ff5a00]" />
-            </div>
-            <p className="label-orange mb-4">ORDER CONFIRMED</p>
-            <h1
-              className="text-4xl font-700 text-[#f5f7f8] mb-6"
-              style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700 }}
-            >
-              LET&rsquo;S BUILD IT.
-            </h1>
-            <p className="text-[#bfc5cc] mb-10">
-              Your order has been received. We&rsquo;ll be in touch within 24 hours to begin the discovery phase.
+        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#050608" }}>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ width: 48, height: 48, border: "2px solid #ff5a00", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 28px" }} />
+            <p style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 18, fontWeight: 700, color: "#f5f7f8", marginBottom: 8 }}>
+              {paymentType === "quote" ? "Submitting your brief…" : "Processing payment…"}
             </p>
-
-            <div className="border border-white/10 p-6 text-left mb-6">
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <p className="label-sm text-[#bfc5cc]/40 mb-1">ORDER ID</p>
-                  <p className="text-[#ff5a00] font-600" style={{ fontWeight: 600 }}>{orderId}</p>
-                </div>
-                <div>
-                  <p className="label-sm text-[#bfc5cc]/40 mb-1">SERVICE</p>
-                  <p className="text-[#f5f7f8]">{service.title}</p>
-                </div>
-                <div>
-                  <p className="label-sm text-[#bfc5cc]/40 mb-1">PACKAGE</p>
-                  <p className="text-[#f5f7f8]">{pkg?.name}</p>
-                </div>
-                <div>
-                  <p className="label-sm text-[#bfc5cc]/40 mb-1">DEPOSIT</p>
-                  <p className="text-[#f5f7f8]">${deposit.toLocaleString()}</p>
-                </div>
-                <div>
-                  <p className="label-sm text-[#bfc5cc]/40 mb-1">PAYMENT</p>
-                  <p className="text-[#f5f7f8]">{payMethod}</p>
-                </div>
-                {cryptoTx && (
-                  <div className="col-span-2">
-                    <p className="label-sm text-[#bfc5cc]/40 mb-1">TX HASH</p>
-                    <p className="text-[#bfc5cc] text-xs font-mono truncate">{cryptoTx.hash.slice(0, 42)}…</p>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {cryptoTx && (
-              <div className="border border-[#ff5a00]/15 bg-[#ff5a00]/04 p-4 text-left mb-6">
-                <p className="label-sm text-[#bfc5cc]/50 mb-1.5">CRYPTO PAYMENT</p>
-                <p className="text-[#bfc5cc] text-xs">
-                  Sent from <span className="text-[#f5f7f8] font-mono">{cryptoTx.address.slice(0, 10)}…</span> ·{" "}
-                  <span className="text-[#ff5a00]">{cryptoTx.token}</span>
-                </p>
-              </div>
-            )}
-
-            <Link to="/" className="btn-secondary">RETURN TO ORVEX</Link>
+            <p style={{ fontSize: 13, color: "rgba(255,255,255,0.35)" }}>
+              {paymentType === "quote" ? "Creating your quote request…" : paymentMethod === "card" ? "Authorising with Stripe…" : "Broadcasting transaction…"}
+            </p>
           </div>
-        </section>
+        </div>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); }}`}</style>
       </Layout>
     );
   }
 
-  /* ── Checkout flow ────────────────────────────────── */
+  const GUTTER: React.CSSProperties = { padding: "0 clamp(20px,5vw,64px)" };
+  const INNER: React.CSSProperties = { maxWidth: 1200, margin: "0 auto" };
+
   return (
     <Layout>
-      <section className="pt-36 pb-10 px-8 md:px-12 border-b border-white/5">
-        <div className="max-w-[1400px] mx-auto">
-          <p className="label-orange mb-4">SERVICE CHECKOUT</p>
-          <h1
-            className="text-4xl font-700 text-[#f5f7f8]"
-            style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700 }}
-          >
-            {service.title}
+      {/* Header */}
+      <div style={{ paddingTop: 100, paddingBottom: 24, borderBottom: "1px solid rgba(255,255,255,0.04)", ...GUTTER, background: "#050608" }}>
+        <div style={INNER}>
+          <p style={{ ...labelStyle, color: "#ff5a00", marginBottom: 10 }}>Service checkout</p>
+          <h1 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: "clamp(24px,4vw,40px)", fontWeight: 700, color: "#f5f7f8", lineHeight: 1.1 }}>
+            {service?.title ?? "Select a service"}
           </h1>
-        </div>
-      </section>
-
-      {/* Step progress */}
-      <div className="px-8 md:px-12 py-4 border-b border-white/5 overflow-x-auto">
-        <div className="max-w-[1400px] mx-auto flex items-center gap-0 min-w-max">
-          {STEPS.map((label, i) => (
-            <div key={label} className="flex items-center">
-              <div
-                className={`flex items-center gap-2 text-[10px] font-700 tracking-[0.12em] uppercase ${
-                  step > i + 1 ? "text-[#ff5a00]" : step === i + 1 ? "text-[#f5f7f8]" : "text-[#bfc5cc]/30"
-                }`}
-                style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700 }}
-              >
-                <div
-                  className={`w-5 h-5 rounded-full border flex items-center justify-center text-[8px] flex-shrink-0 ${
-                    step > i + 1
-                      ? "border-[#ff5a00] bg-[#ff5a00]/10"
-                      : step === i + 1
-                      ? "border-[#f5f7f8]"
-                      : "border-white/10"
-                  }`}
-                >
-                  {step > i + 1 ? <Check size={8} /> : i + 1}
-                </div>
-                <span className="hidden md:block">{label}</span>
-              </div>
-              {i < STEPS.length - 1 && (
-                <div className={`w-8 h-[1px] mx-2 ${step > i + 1 ? "bg-[#ff5a00]/40" : "bg-white/10"}`} />
-              )}
-            </div>
-          ))}
         </div>
       </div>
 
-      <section className="py-12 px-8 md:px-12">
-        <div className="max-w-[1400px] mx-auto grid grid-cols-1 md:grid-cols-[1fr_320px] gap-12">
+      <Progress current={step} />
+
+      <div style={{ background: "#050608", minHeight: "100vh", ...GUTTER, paddingTop: 48, paddingBottom: 80 }}>
+        <div style={{ ...INNER, display: "grid", gridTemplateColumns: "1fr min(320px, 30%)", gap: 48, alignItems: "start" }}>
+
+          {/* ── Left: step content ── */}
           <div>
-            {/* ── Step 1 — Package ── */}
-            {step === 1 && (
-              <div>
-                <h2 className="text-xl font-700 text-[#f5f7f8] mb-8" style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700 }}>
-                  Select a package
-                </h2>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+
+            {/* ── SERVICE ── */}
+            {step === "service" && (
+              <StepShell title="Choose a service" subtitle="What are you looking to create?">
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {services.filter((s) => s.visible).map((s) => (
+                    <ServiceCard
+                      key={s.id}
+                      service={s}
+                      selected={serviceId === s.id}
+                      onClick={() => { setServiceId(s.id); setPkgId(""); setSelectedAddonIds([]); }}
+                    />
+                  ))}
+                </div>
+                <NavRow>
+                  <span />
+                  <button style={{ ...btnPrimary, opacity: canAdvance() ? 1 : 0.35 }} onClick={() => canAdvance() && goTo("package")} disabled={!canAdvance()}>
+                    Select package <ArrowRight size={13} />
+                  </button>
+                </NavRow>
+              </StepShell>
+            )}
+
+            {/* ── PACKAGE ── */}
+            {step === "package" && service && (
+              <StepShell title={`${service.title} packages`} subtitle="Choose the scope that fits your project.">
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))", gap: 12 }}>
                   {service.packages.map((p) => (
                     <button
                       key={p.id}
-                      onClick={() => setSelectedPkg(p.id)}
-                      className={`text-left p-6 border transition-all ${
-                        selectedPkg === p.id ? "border-[#ff5a00] bg-[#ff5a00]/05" : "border-white/10 hover:border-white/30"
-                      }`}
+                      onClick={() => setPkgId(p.id)}
+                      style={{
+                        textAlign: "left", padding: 20,
+                        border: `1px solid ${pkgId === p.id ? "#ff5a00" : "rgba(255,255,255,0.07)"}`,
+                        background: pkgId === p.id ? "rgba(255,90,0,0.04)" : "transparent",
+                        cursor: "pointer", transition: "border-color 0.15s, background 0.15s",
+                      }}
                     >
-                      {p.popular && <span className="badge badge-orange mb-3">POPULAR</span>}
-                      <p className="label-sm mb-2">{p.name}</p>
-                      <p className="text-2xl font-700 text-[#f5f7f8] mb-1" style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700 }}>
+                      {p.popular && (
+                        <span style={{ display: "inline-block", fontSize: 9, fontWeight: 700, letterSpacing: "0.14em", color: "#ff5a00", border: "1px solid rgba(255,90,0,0.4)", padding: "3px 8px", marginBottom: 10 }}>
+                          POPULAR
+                        </span>
+                      )}
+                      <p style={{ ...labelStyle, marginBottom: 6 }}>{p.name}</p>
+                      <p style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 26, fontWeight: 700, color: "#f5f7f8", marginBottom: 4 }}>
                         ${p.price.toLocaleString()}
                       </p>
-                      <p className="text-[#bfc5cc] text-xs mb-4">{p.description}</p>
-                      <ul className="list-none p-0 m-0 space-y-1.5">
+                      <p style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginBottom: 16 }}>{p.description}</p>
+                      <div style={{ borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 14, display: "flex", flexDirection: "column", gap: 6 }}>
                         {p.features.map((f) => (
-                          <li key={f} className="flex items-center gap-2 text-[#bfc5cc] text-xs">
-                            <Check size={9} className="text-[#ff5a00]" /> {f}
-                          </li>
+                          <div key={f} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                            <Check size={9} color="#ff5a00" style={{ marginTop: 3, flexShrink: 0 }} />
+                            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", lineHeight: 1.5 }}>{f}</span>
+                          </div>
                         ))}
-                      </ul>
+                      </div>
+                      <p style={{ fontSize: 10, color: "rgba(255,255,255,0.25)", marginTop: 14 }}>Timeline: {p.duration}</p>
                     </button>
                   ))}
                 </div>
-                {service.packages.length === 0 && (
-                  <div className="border border-white/10 p-8 text-center">
-                    <p className="text-[#bfc5cc] mb-4">This service requires a custom quote.</p>
-                    <Link to="/contact" className="btn-primary">REQUEST QUOTE <ArrowRight size={14} /></Link>
-                  </div>
-                )}
-                {service.packages.length > 0 && (
-                  <button onClick={() => setStep(2)} disabled={!selectedPkg} className="btn-primary disabled:opacity-40">
-                    PROJECT DETAILS <ArrowRight size={14} />
+                <NavRow>
+                  <button style={btnGhost} onClick={back}><ChevronLeft size={13} /> Back</button>
+                  <button style={{ ...btnPrimary, opacity: canAdvance() ? 1 : 0.35 }} onClick={() => canAdvance() && goTo("requirements")} disabled={!canAdvance()}>
+                    Requirements <ArrowRight size={13} />
                   </button>
-                )}
-              </div>
+                </NavRow>
+              </StepShell>
             )}
 
-            {/* ── Step 2 — Project details ── */}
-            {step === 2 && (
-              <div>
-                <h2 className="text-xl font-700 text-[#f5f7f8] mb-8" style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700 }}>
-                  Project details
-                </h2>
-                <form onSubmit={(e) => { e.preventDefault(); setStep(3); }} className="space-y-6">
+            {/* ── REQUIREMENTS ── */}
+            {step === "requirements" && (
+              <StepShell title="Project requirements" subtitle={`Tell us what you need. The more detail, the better the outcome.`}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+                  {reqFields.map((field) => (
+                    <RequirementInput
+                      key={field.key}
+                      field={field}
+                      value={requirements[field.key] ?? ""}
+                      onChange={(v) => setRequirements((r) => ({ ...r, [field.key]: v }))}
+                    />
+                  ))}
                   <div>
-                    <label className="orvex-label">Project Description *</label>
-                    <textarea required value={projectForm.description} onChange={setProject("description")} className="orvex-input resize-none" rows={4} placeholder="Describe your project and what you want to achieve..." />
+                    <label style={{ ...labelStyle, marginBottom: 8, display: "block" }}>Attach files</label>
+                    <p style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginBottom: 10 }}>
+                      Brand guidelines, existing assets, reference images, CAD files, or anything relevant.
+                    </p>
+                    <FileUpload files={files} onAdd={addFiles} onRemove={removeFile} />
                   </div>
-                  <div>
-                    <label className="orvex-label">Objectives</label>
-                    <textarea value={projectForm.objectives} onChange={setProject("objectives")} className="orvex-input resize-none" rows={3} placeholder="What are the key goals?" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-6">
-                    <div><label className="orvex-label">Output Dimensions</label><input value={projectForm.dimensions} onChange={setProject("dimensions")} className="orvex-input" placeholder="e.g. 4K, 1920×1080…" /></div>
-                    <div><label className="orvex-label">Deadline</label><input type="date" value={projectForm.deadline} onChange={setProject("deadline")} className="orvex-input" /></div>
-                  </div>
-                  <div><label className="orvex-label">Style References</label><input value={projectForm.style} onChange={setProject("style")} className="orvex-input" placeholder="Describe your preferred style or link references…" /></div>
-                  <div><label className="orvex-label">Target Platform</label><input value={projectForm.platform} onChange={setProject("platform")} className="orvex-input" placeholder="e.g. Instagram, website, print, broadcast…" /></div>
-                  <div className="flex gap-4">
-                    <button type="button" onClick={() => setStep(1)} className="btn-ghost"><ChevronLeft size={14} /> BACK</button>
-                    <button type="submit" className="btn-primary">CUSTOMER DETAILS <ArrowRight size={14} /></button>
-                  </div>
-                </form>
-              </div>
+                </div>
+                <NavRow>
+                  <button style={btnGhost} onClick={back}><ChevronLeft size={13} /> Back</button>
+                  <button style={{ ...btnPrimary, opacity: canAdvance() ? 1 : 0.35 }} onClick={() => canAdvance() && goTo("addons")} disabled={!canAdvance()}>
+                    Add-ons <ArrowRight size={13} />
+                  </button>
+                </NavRow>
+              </StepShell>
             )}
 
-            {/* ── Step 3 — Customer ── */}
-            {step === 3 && (
-              <div>
-                <h2 className="text-xl font-700 text-[#f5f7f8] mb-8" style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700 }}>
-                  Your information
-                </h2>
-                <form onSubmit={(e) => { e.preventDefault(); setStep(4); }} className="space-y-6">
-                  <div className="grid grid-cols-2 gap-6">
-                    <div><label className="orvex-label">Full Name *</label><input required value={custForm.name} onChange={setCust("name")} className="orvex-input" placeholder="Your name" /></div>
-                    <div><label className="orvex-label">Company</label><input value={custForm.company} onChange={setCust("company")} className="orvex-input" placeholder="Company name" /></div>
-                    <div><label className="orvex-label">Email *</label><input required type="email" value={custForm.email} onChange={setCust("email")} className="orvex-input" placeholder="your@email.com" /></div>
-                    <div><label className="orvex-label">Phone</label><input type="tel" value={custForm.phone} onChange={setCust("phone")} className="orvex-input" placeholder="+1 555 000 0000" /></div>
-                  </div>
-                  <div className="flex gap-4">
-                    <button type="button" onClick={() => setStep(2)} className="btn-ghost"><ChevronLeft size={14} /> BACK</button>
-                    <button type="submit" className="btn-primary">ADD-ONS <ArrowRight size={14} /></button>
-                  </div>
-                </form>
-              </div>
-            )}
-
-            {/* ── Step 4 — Add-ons ── */}
-            {step === 4 && (
-              <div>
-                <h2 className="text-xl font-700 text-[#f5f7f8] mb-8" style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700 }}>
-                  Optional add-ons
-                </h2>
-                <div className="space-y-3 mb-8">
-                  {ADD_ONS.map((ao) => {
-                    const price = ao.unit === "%" ? pkgPrice * ao.price : ao.price;
-                    const active = addons.includes(ao.id);
+            {/* ── ADDONS ── */}
+            {step === "addons" && service && (
+              <StepShell title="Optional add-ons" subtitle="Expand your engagement. All add-ons are applied to this project only.">
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {availableAddons.map((addon) => {
+                    const price = computeAddonPrice(addon, pkg?.price ?? 0);
+                    const active = selectedAddonIds.includes(addon.id);
                     return (
                       <button
-                        key={ao.id}
-                        onClick={() => toggleAddon(ao.id)}
-                        className={`w-full text-left p-5 border flex items-center gap-4 transition-all ${
-                          active ? "border-[#ff5a00] bg-[#ff5a00]/05" : "border-white/10 hover:border-white/30"
-                        }`}
+                        key={addon.id}
+                        onClick={() => toggleAddon(addon.id)}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 14, padding: "16px 18px",
+                          border: `1px solid ${active ? "#ff5a00" : "rgba(255,255,255,0.07)"}`,
+                          background: active ? "rgba(255,90,0,0.04)" : "transparent",
+                          cursor: "pointer", textAlign: "left", transition: "all 0.15s",
+                        }}
                       >
-                        <div className={`w-5 h-5 border flex items-center justify-center flex-shrink-0 ${active ? "border-[#ff5a00] bg-[#ff5a00]" : "border-white/20"}`}>
-                          {active && <Check size={10} className="text-[#050608]" />}
+                        <div style={{
+                          width: 18, height: 18, border: `1px solid ${active ? "#ff5a00" : "rgba(255,255,255,0.2)"}`,
+                          background: active ? "#ff5a00" : "transparent",
+                          display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                        }}>
+                          {active && <Check size={10} color="#000" strokeWidth={3} />}
                         </div>
-                        <div className="flex-1">
-                          <p className="font-600 text-[#f5f7f8] text-sm" style={{ fontWeight: 600 }}>{ao.label}</p>
-                          <p className="text-[#bfc5cc] text-xs">{ao.desc}</p>
+                        <div style={{ flex: 1 }}>
+                          <p style={{ fontSize: 13, fontWeight: 600, color: "#f5f7f8", marginBottom: 2 }}>{addon.label}</p>
+                          <p style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{addon.description}</p>
                         </div>
-                        <p className="text-[#ff5a00] text-sm font-700" style={{ fontWeight: 700 }}>
-                          +${price.toLocaleString()}{ao.unit === "%" ? ` (${ao.price * 100}%)` : ""}
+                        <p style={{ fontSize: 13, fontWeight: 700, color: "#ff5a00", flexShrink: 0 }}>
+                          {price === 0 ? "Free" : `+$${price.toLocaleString()}`}
+                          {addon.priceType === "percent" ? ` (${addon.price}%)` : ""}
                         </p>
                       </button>
                     );
                   })}
                 </div>
-                <div className="flex gap-4">
-                  <button onClick={() => setStep(3)} className="btn-ghost"><ChevronLeft size={14} /> BACK</button>
-                  <button onClick={() => setStep(5)} className="btn-primary">PAYMENT <ArrowRight size={14} /></button>
-                </div>
-              </div>
+                <NavRow>
+                  <button style={btnGhost} onClick={back}><ChevronLeft size={13} /> Back</button>
+                  <button style={btnPrimary} onClick={() => goTo("timeline")}>
+                    Timeline <ArrowRight size={13} />
+                  </button>
+                </NavRow>
+              </StepShell>
             )}
 
-            {/* ── Step 5 — Payment ── */}
-            {step === 5 && (
-              <div>
-                <h2 className="text-xl font-700 text-[#f5f7f8] mb-8" style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700 }}>
-                  Payment
-                </h2>
-
-                {/* Method tabs */}
-                <div className="border border-white/8 p-6 mb-6">
-                  <p className="label-sm mb-4">PAYMENT METHOD</p>
-                  <div className="grid grid-cols-3 gap-2 mb-6">
-                    {PAYMENT_METHODS.map((m) => (
-                      <button
-                        key={m}
-                        onClick={() => setPayMethod(m)}
-                        className={`p-3.5 border text-center transition-all ${
-                          payMethod === m
-                            ? "border-[#ff5a00] bg-[#ff5a00]/06 text-[#ff5a00]"
-                            : "border-white/10 text-[#bfc5cc] hover:border-white/25"
-                        }`}
-                      >
-                        <p className="text-xs font-700" style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700 }}>
-                          {m === "Crypto Wallet" ? (
-                            <span className="flex flex-col items-center gap-1">
-                              <Wallet size={14} />
-                              <span className="text-[9px] tracking-wider">CRYPTO</span>
-                            </span>
-                          ) : (
-                            m
+            {/* ── TIMELINE ── */}
+            {step === "timeline" && (
+              <StepShell title="Timeline preferences" subtitle="When do you need this project completed?">
+                <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+                  <div>
+                    <label style={{ ...labelStyle, marginBottom: 8, display: "block" }}>Preferred start date</label>
+                    <input
+                      type="date"
+                      value={preferredStartDate}
+                      min={new Date().toISOString().slice(0, 10)}
+                      onChange={(e) => setPreferredStartDate(e.target.value)}
+                      style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.08)", color: "#f5f7f8", padding: "12px 14px", fontSize: 13, outline: "none", width: 220 }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ ...labelStyle, marginBottom: 10, display: "block" }}>Urgency</label>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {[
+                        { value: "standard", label: "Standard", desc: `Package timeline (${pkg?.duration ?? "as quoted"})`, extra: "" },
+                        { value: "expedited", label: "Expedited", desc: "15% faster — requires resource allocation review", extra: "+15%" },
+                        { value: "rush", label: "Rush", desc: "50% faster — full team priority, limited availability", extra: "+50%" },
+                      ].map((opt) => (
+                        <button
+                          key={opt.value}
+                          onClick={() => setTimelineUrgency(opt.value as any)}
+                          style={{
+                            display: "flex", alignItems: "center", gap: 14, padding: "14px 18px",
+                            border: `1px solid ${timelineUrgency === opt.value ? "#ff5a00" : "rgba(255,255,255,0.07)"}`,
+                            background: timelineUrgency === opt.value ? "rgba(255,90,0,0.04)" : "transparent",
+                            cursor: "pointer", textAlign: "left", transition: "all 0.15s",
+                          }}
+                        >
+                          <div style={{ width: 14, height: 14, borderRadius: "50%", border: `1px solid ${timelineUrgency === opt.value ? "#ff5a00" : "rgba(255,255,255,0.2)"}`, background: timelineUrgency === opt.value ? "#ff5a00" : "transparent", flexShrink: 0 }} />
+                          <div style={{ flex: 1 }}>
+                            <p style={{ fontSize: 13, fontWeight: 600, color: "#f5f7f8" }}>{opt.label}</p>
+                            <p style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{opt.desc}</p>
+                          </div>
+                          {opt.extra && (
+                            <span style={{ fontSize: 12, color: "#ff5a00", fontWeight: 700 }}>{opt.extra}</span>
                           )}
-                        </p>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label style={{ ...labelStyle, marginBottom: 8, display: "block" }}>Additional notes</label>
+                    <textarea
+                      value={notes}
+                      onChange={(e) => setNotes(e.target.value)}
+                      placeholder="Anything else we should know — hard deadline, budget sensitivity, technical constraints..."
+                      rows={4}
+                      style={{ width: "100%", background: "transparent", border: "1px solid rgba(255,255,255,0.08)", color: "#f5f7f8", fontSize: 13, padding: "12px 14px", resize: "vertical", outline: "none", fontFamily: "'Inter', sans-serif", boxSizing: "border-box" }}
+                    />
+                  </div>
+                </div>
+                <NavRow>
+                  <button style={btnGhost} onClick={back}><ChevronLeft size={13} /> Back</button>
+                  <button style={btnPrimary} onClick={() => goTo("details")}>
+                    Your details <ArrowRight size={13} />
+                  </button>
+                </NavRow>
+              </StepShell>
+            )}
+
+            {/* ── DETAILS ── */}
+            {step === "details" && (
+              <StepShell title="Your details" subtitle="Who should we address this engagement to?">
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+                  {[
+                    { key: "name", label: "Full name *", type: "text", placeholder: "Jane Smith" },
+                    { key: "company", label: "Company", type: "text", placeholder: "Your studio" },
+                    { key: "email", label: "Email address *", type: "email", placeholder: "jane@company.com" },
+                    { key: "phone", label: "Phone", type: "tel", placeholder: "+1 555 000 0000" },
+                    { key: "country", label: "Country", type: "text", placeholder: "United States" },
+                  ].map(({ key, label, type, placeholder }) => (
+                    <div key={key} style={{ gridColumn: key === "company" || key === "country" ? "span 1" : "span 1" }}>
+                      <label style={{ ...labelStyle, marginBottom: 8, display: "block" }}>{label}</label>
+                      <input
+                        type={type}
+                        placeholder={placeholder}
+                        value={details[key as keyof typeof details]}
+                        onChange={(e) => setDetails((d) => ({ ...d, [key]: e.target.value }))}
+                        style={{ width: "100%", background: "transparent", border: "1px solid rgba(255,255,255,0.08)", color: "#f5f7f8", fontSize: 13, padding: "12px 14px", outline: "none", fontFamily: "'Inter', sans-serif", boxSizing: "border-box" }}
+                      />
+                    </div>
+                  ))}
+                </div>
+                <NavRow>
+                  <button style={btnGhost} onClick={back}><ChevronLeft size={13} /> Back</button>
+                  <button style={{ ...btnPrimary, opacity: canAdvance() ? 1 : 0.35 }} onClick={() => canAdvance() && goTo("summary")} disabled={!canAdvance()}>
+                    Review order <ArrowRight size={13} />
+                  </button>
+                </NavRow>
+              </StepShell>
+            )}
+
+            {/* ── SUMMARY ── */}
+            {step === "summary" && service && pkg && (
+              <StepShell title="Order review" subtitle="Verify every detail before payment.">
+                <div style={{ border: "1px solid rgba(255,255,255,0.06)" }}>
+                  {/* Service block */}
+                  <SummaryBlock label="Engagement">
+                    <SummaryRow label="Service" value={service.title} />
+                    <SummaryRow label="Package" value={`${pkg.name} — $${pkg.price.toLocaleString()}`} />
+                    <SummaryRow label="Timeline" value={pkg.duration} />
+                    {selectedAddons.length > 0 && <SummaryRow label="Add-ons" value={selectedAddons.map((a) => a.label).join(", ")} />}
+                  </SummaryBlock>
+                  {/* Requirements */}
+                  <SummaryBlock label="Project requirements">
+                    {reqFields.map((f) => requirements[f.key] ? (
+                      <SummaryRow key={f.key} label={f.label} value={requirements[f.key]} multiline />
+                    ) : null)}
+                    {files.length > 0 && <SummaryRow label="Attachments" value={files.map((f) => f.name).join(", ")} />}
+                  </SummaryBlock>
+                  {/* Timeline */}
+                  <SummaryBlock label="Timeline">
+                    {preferredStartDate && <SummaryRow label="Preferred start" value={preferredStartDate} />}
+                    <SummaryRow label="Urgency" value={{ standard: "Standard", expedited: "Expedited (+15%)", rush: "Rush (+50%)" }[timelineUrgency]} />
+                    {notes && <SummaryRow label="Notes" value={notes} multiline />}
+                  </SummaryBlock>
+                  {/* Customer */}
+                  <SummaryBlock label="Your details">
+                    <SummaryRow label="Name" value={details.name} />
+                    {details.company && <SummaryRow label="Company" value={details.company} />}
+                    <SummaryRow label="Email" value={details.email} />
+                    {details.phone && <SummaryRow label="Phone" value={details.phone} />}
+                    {details.country && <SummaryRow label="Country" value={details.country} />}
+                  </SummaryBlock>
+                  {/* Financials */}
+                  <SummaryBlock label="Financials" last>
+                    <SummaryRow label="Package" value={`$${pkg.price.toLocaleString()}`} />
+                    {selectedAddons.map((a) => (
+                      <SummaryRow key={a.id} label={a.label} value={`+$${a.price.toLocaleString()}`} />
+                    ))}
+                    <SummaryRow label="Subtotal" value={`$${subtotal.toLocaleString()}`} />
+                  </SummaryBlock>
+                </div>
+                <NavRow>
+                  <button style={btnGhost} onClick={back}><ChevronLeft size={13} /> Back</button>
+                  <button style={btnPrimary} onClick={() => goTo("payment")}>
+                    Payment <ArrowRight size={13} />
+                  </button>
+                </NavRow>
+              </StepShell>
+            )}
+
+            {/* ── PAYMENT ── */}
+            {step === "payment" && service && pkg && (
+              <StepShell title="Payment" subtitle="Choose how you want to proceed.">
+                {/* Payment type */}
+                <div style={{ marginBottom: 32 }}>
+                  <p style={{ ...labelStyle, marginBottom: 14 }}>Payment option</p>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
+                    {([
+                      { value: "deposit", label: "Deposit", desc: `${depositPct}% now — balance on delivery`, amount: `$${depositAmount.toLocaleString()}` },
+                      { value: "full", label: "Full payment", desc: "Pay in full — 5% discount applied", amount: `$${Math.round(subtotal * 0.95).toLocaleString()}` },
+                      { value: "quote", label: "Custom quote", desc: "Submit brief — we send a tailored price", amount: "Free" },
+                    ] as { value: PaymentType; label: string; desc: string; amount: string }[]).map((opt) => (
+                      <button
+                        key={opt.value}
+                        onClick={() => setPaymentType(opt.value)}
+                        style={{
+                          padding: "18px 16px", textAlign: "left",
+                          border: `1px solid ${paymentType === opt.value ? "#ff5a00" : "rgba(255,255,255,0.07)"}`,
+                          background: paymentType === opt.value ? "rgba(255,90,0,0.04)" : "transparent",
+                          cursor: "pointer", transition: "all 0.15s",
+                        }}
+                      >
+                        <p style={{ fontSize: 18, fontWeight: 700, color: "#f5f7f8", fontFamily: "'Space Grotesk', sans-serif", marginBottom: 4 }}>{opt.amount}</p>
+                        <p style={{ fontSize: 12, fontWeight: 700, color: paymentType === opt.value ? "#ff5a00" : "#f5f7f8", marginBottom: 4, letterSpacing: "0.06em", textTransform: "uppercase" }}>{opt.label}</p>
+                        <p style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>{opt.desc}</p>
                       </button>
                     ))}
                   </div>
-
-                  {/* Card form */}
-                  {payMethod === "Credit / Debit Card" && (
-                    <div className="space-y-4">
-                      <div><label className="orvex-label">Card Number</label><input className="orvex-input" placeholder="•••• •••• •••• ••••" /></div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div><label className="orvex-label">Expiry</label><input className="orvex-input" placeholder="MM / YY" /></div>
-                        <div><label className="orvex-label">CVC</label><input className="orvex-input" placeholder="•••" /></div>
-                      </div>
-                      <div><label className="orvex-label">Name on Card</label><input className="orvex-input" placeholder="Full name" /></div>
-                    </div>
-                  )}
-
-                  {/* Bank transfer */}
-                  {payMethod === "Bank Transfer" && (
-                    <div className="space-y-3 text-sm">
-                      <p className="text-[#bfc5cc] text-xs leading-relaxed mb-4">
-                        Send your deposit to the account below. Include your name and project description as the reference. We confirm receipt within 1 business day.
-                      </p>
-                      {[
-                        { label: "Account Name", value: "ORVEX Studio Ltd." },
-                        { label: "Bank", value: "Chase Bank NA" },
-                        { label: "Account Number", value: "••••••• 4821" },
-                        { label: "Routing", value: "021000021" },
-                        { label: "SWIFT/BIC", value: "CHASUS33" },
-                        { label: "Reference", value: custForm.name ? `${custForm.name} — ${service.title}` : "Your Name — Service Name" },
-                      ].map((r) => (
-                        <div key={r.label} className="flex justify-between border-b border-white/5 pb-3">
-                          <p className="label-sm text-[#bfc5cc]/40">{r.label}</p>
-                          <p className="text-[#f5f7f8] text-xs text-right">{r.value}</p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Crypto wallet */}
-                  {payMethod === "Crypto Wallet" && (
-                    <CryptoPaymentPanel
-                      depositUsd={deposit}
-                      onSuccess={handleCryptoSuccess}
-                    />
-                  )}
                 </div>
 
-                {payMethod !== "Crypto Wallet" && (
-                  <div className="flex items-center gap-3 text-[#bfc5cc]/50 text-xs mb-8">
-                    <Shield size={12} className="text-[#bfc5cc]/40" />
-                    Payment processed securely. We never store card details.
+                {/* Payment method — only for non-quote */}
+                {paymentType !== "quote" && (
+                  <div style={{ marginBottom: 24 }}>
+                    <p style={{ ...labelStyle, marginBottom: 14 }}>Payment method</p>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 20 }}>
+                      {([
+                        { id: "card", label: "Card" },
+                        { id: "bank_transfer", label: "Bank transfer" },
+                        { id: "crypto", label: "Crypto" },
+                      ] as { id: PaymentMethodType; label: string }[]).map((m) => (
+                        <button
+                          key={m.id}
+                          onClick={() => { setPaymentMethod(m.id); setCryptoPaid(false); }}
+                          style={{
+                            padding: "12px 16px", border: `1px solid ${paymentMethod === m.id ? "#ff5a00" : "rgba(255,255,255,0.07)"}`,
+                            background: paymentMethod === m.id ? "rgba(255,90,0,0.04)" : "transparent",
+                            cursor: "pointer", fontSize: 12, fontWeight: 700, color: paymentMethod === m.id ? "#ff5a00" : "rgba(255,255,255,0.45)",
+                            letterSpacing: "0.08em", textTransform: "uppercase", transition: "all 0.15s",
+                          }}
+                        >
+                          {m.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Card form */}
+                    {paymentMethod === "card" && (
+                      <div style={{ border: "1px solid rgba(255,255,255,0.06)", padding: 20 }}>
+                        <p style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginBottom: 16, lineHeight: 1.6 }}>
+                          Card details are processed directly by Stripe. ORVEX never stores card data.
+                        </p>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                          <CardInput label="Card number" placeholder="•••• •••• •••• ••••" />
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+                            <CardInput label="Expiry" placeholder="MM / YY" />
+                            <CardInput label="CVC" placeholder="•••" />
+                          </div>
+                          <CardInput label="Cardholder name" placeholder="Jane Smith" />
+                        </div>
+                        <div style={{ display: "flex", gap: 8, marginTop: 16, color: "rgba(255,255,255,0.25)", fontSize: 10 }}>
+                          <Shield size={10} style={{ flexShrink: 0, marginTop: 1 }} />
+                          <span>256-bit SSL encrypted. PCI DSS compliant via Stripe.</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Bank transfer */}
+                    {paymentMethod === "bank_transfer" && (
+                      <div style={{ border: "1px solid rgba(255,255,255,0.06)", padding: 20 }}>
+                        <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 16, lineHeight: 1.6 }}>
+                          Transfer your deposit to the account below. Use your name and "<strong style={{ color: "#f5f7f8" }}>{service.title}</strong>" as the reference. We confirm receipt within 1 business day.
+                        </p>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+                          {[
+                            ["Account name", "ORVEX Studio Ltd."],
+                            ["Bank", "Chase Bank NA"],
+                            ["Account number", "•••••• 4821"],
+                            ["Routing (ABA)", "021000021"],
+                            ["SWIFT / BIC", "CHASUS33"],
+                            ["Reference", `${details.name || "Your Name"} — ${service.title}`],
+                          ].map(([label, value]) => (
+                            <div key={label} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+                              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", letterSpacing: "0.06em", textTransform: "uppercase" }}>{label}</span>
+                              <span style={{ fontSize: 12, color: "#f5f7f8" }}>{value}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Crypto */}
+                    {paymentMethod === "crypto" && (
+                      <CryptoPanel amountUsd={depositAmount} onSuccess={() => setCryptoPaid(true)} />
+                    )}
                   </div>
                 )}
 
-                <div className="flex gap-4 mt-6">
-                  <button onClick={() => setStep(4)} className="btn-ghost"><ChevronLeft size={14} /> BACK</button>
-                  {payMethod !== "Crypto Wallet" && (
-                    <button onClick={() => setConfirmed(true)} className="btn-primary">
-                      {payMethod === "Bank Transfer" ? "CONFIRM ORDER" : `PAY DEPOSIT $${deposit.toLocaleString()}`}
-                      <ArrowRight size={14} />
+                {/* Quote info */}
+                {paymentType === "quote" && (
+                  <div style={{ border: "1px solid rgba(255,255,255,0.06)", padding: 24, marginBottom: 24 }}>
+                    <p style={{ fontSize: 14, fontWeight: 600, color: "#f5f7f8", marginBottom: 8 }}>What happens next</p>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                      {[
+                        "We review your brief within 24 hours",
+                        "You receive a detailed, itemised quote by email",
+                        "You approve or negotiate — no pressure",
+                        "We begin once you confirm and pay the deposit",
+                      ].map((step, i) => (
+                        <div key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                          <div style={{ width: 20, height: 20, border: "1px solid rgba(255,90,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 10, color: "#ff5a00", fontWeight: 700 }}>{i + 1}</div>
+                          <span style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", lineHeight: 1.6 }}>{step}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <NavRow>
+                  <button style={btnGhost} onClick={back}><ChevronLeft size={13} /> Back</button>
+                  {(paymentMethod !== "crypto" || cryptoPaid || paymentType === "quote") && (
+                    <button
+                      style={{ ...btnPrimary, opacity: canAdvance() ? 1 : 0.4 }}
+                      disabled={!canAdvance()}
+                      onClick={handlePlaceOrder}
+                    >
+                      {paymentType === "quote" ? "Submit brief →" : paymentMethod === "bank_transfer" ? "Confirm order →" : `Pay $${depositAmount.toLocaleString()} →`}
                     </button>
                   )}
-                </div>
-              </div>
+                </NavRow>
+              </StepShell>
             )}
           </div>
 
-          {/* Order summary */}
-          <div>
-            <div className="border border-white/8 p-6 sticky top-24">
-              <p className="label-sm mb-6">ORDER SUMMARY</p>
-              <div className="mb-4">
-                <p className="text-[#f5f7f8] font-600 text-sm mb-1" style={{ fontWeight: 600 }}>{service.title}</p>
-                {pkg && <p className="text-[#bfc5cc] text-xs">{pkg.name} Package</p>}
-              </div>
-              <div className="border-t border-white/5 pt-4 space-y-3 mb-4">
-                <div className="flex justify-between text-sm">
-                  <span className="text-[#bfc5cc]">Package</span>
-                  <span className="text-[#f5f7f8]">${pkgPrice.toLocaleString()}</span>
-                </div>
-                {addons.map((id) => {
-                  const ao = ADD_ONS.find((a) => a.id === id);
-                  if (!ao) return null;
-                  const price = ao.unit === "%" ? pkgPrice * ao.price : ao.price;
-                  return (
-                    <div key={id} className="flex justify-between text-sm">
-                      <span className="text-[#bfc5cc]">{ao.label}</span>
-                      <span className="text-[#f5f7f8]">+${price.toLocaleString()}</span>
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="border-t border-white/5 pt-4 space-y-3">
-                <div className="flex justify-between text-sm">
-                  <span className="text-[#bfc5cc]">Subtotal</span>
-                  <span className="text-[#f5f7f8]">${subtotal.toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-[#bfc5cc]">Deposit (50%)</span>
-                  <span className="text-[#ff5a00] font-700" style={{ fontWeight: 700 }}>${deposit.toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-[#bfc5cc]">Balance on delivery</span>
-                  <span className="text-[#f5f7f8]">${deposit.toLocaleString()}</span>
-                </div>
-              </div>
-
-              {/* Crypto equivalent preview */}
-              {payMethod === "Crypto Wallet" && deposit > 0 && (
-                <div className="mt-4 pt-4 border-t border-white/5">
-                  <p className="label-sm text-[#bfc5cc]/40 mb-2">CRYPTO EQUIVALENT</p>
-                  <div className="space-y-1">
-                    {CRYPTO_TOKENS.map((t) => (
-                      <div key={t.symbol} className="flex justify-between text-xs">
-                        <span className="text-[#bfc5cc]/50">{t.symbol}</span>
-                        <span className="text-[#bfc5cc]">{(deposit / t.rate).toFixed(t.decimals)}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <p className="text-[#bfc5cc]/30 text-[10px] mt-2">Rates are approximate</p>
-                </div>
-              )}
-
-              {pkg && (
-                <div className="mt-6 border-t border-white/5 pt-6">
-                  <p className="label-sm text-[#bfc5cc]/40 mb-2">TIMELINE</p>
-                  <p className="text-[#f5f7f8] text-sm">{pkg.duration}</p>
-                </div>
-              )}
-              <div className="mt-6 flex items-center gap-2 text-[#bfc5cc]/50 text-xs">
-                <Shield size={10} />
-                50% deposit. Balance due on delivery.
-              </div>
-            </div>
-          </div>
+          {/* ── Right: order summary sidebar ── */}
+          <OrderSummary
+            service={service}
+            pkg={pkg}
+            selectedAddons={selectedAddons}
+            paymentType={paymentType}
+            depositPct={depositPct}
+          />
         </div>
-      </section>
+      </div>
+
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); }}
+        input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); }
+      `}</style>
     </Layout>
   );
 }
+
+// ── Shared sub-components ──────────────────────────────────────────────────
+
+function StepShell({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <h2 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 22, fontWeight: 700, color: "#f5f7f8", marginBottom: 6 }}>{title}</h2>
+      <p style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginBottom: 32 }}>{subtitle}</p>
+      {children}
+    </div>
+  );
+}
+
+function NavRow({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 36, paddingTop: 24, borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+      {children}
+    </div>
+  );
+}
+
+function SummaryBlock({ label, children, last }: { label: string; children: React.ReactNode; last?: boolean }) {
+  return (
+    <div style={{ borderBottom: last ? "none" : "1px solid rgba(255,255,255,0.04)", padding: "20px 20px" }}>
+      <p style={{ ...labelStyle, marginBottom: 12, color: "#ff5a00" }}>{label}</p>
+      {children}
+    </div>
+  );
+}
+
+function SummaryRow({ label, value, multiline }: { label: string; value: string; multiline?: boolean }) {
+  if (!value) return null;
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 16, marginBottom: 8 }}>
+      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", letterSpacing: "0.06em", textTransform: "uppercase", flexShrink: 0 }}>{label}</span>
+      <span style={{ fontSize: 12, color: "#f5f7f8", textAlign: "right", maxWidth: "60%", lineHeight: multiline ? 1.6 : 1.4 }}>{value}</span>
+    </div>
+  );
+}
+
+function ServiceCard({ service, selected, onClick }: { service: Service; selected: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: "flex", alignItems: "flex-start", gap: 16, padding: "16px 18px", textAlign: "left",
+        border: `1px solid ${selected ? "#ff5a00" : "rgba(255,255,255,0.07)"}`,
+        background: selected ? "rgba(255,90,0,0.04)" : "transparent",
+        cursor: "pointer", transition: "all 0.15s", width: "100%",
+      }}
+    >
+      <div style={{ width: 32, height: 32, border: "1px solid rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: selected ? "#ff5a00" : "rgba(255,255,255,0.3)", fontFamily: "'Space Grotesk', sans-serif" }}>{service.number}</span>
+      </div>
+      <div style={{ flex: 1 }}>
+        <p style={{ fontSize: 14, fontWeight: 700, color: "#f5f7f8", marginBottom: 2, fontFamily: "'Space Grotesk', sans-serif" }}>{service.title}</p>
+        <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", lineHeight: 1.5 }}>{service.description}</p>
+      </div>
+      <div style={{ textAlign: "right", flexShrink: 0 }}>
+        <p style={{ fontSize: 12, color: "rgba(255,255,255,0.3)" }}>from</p>
+        <p style={{ fontSize: 14, fontWeight: 700, color: selected ? "#ff5a00" : "#f5f7f8" }}>${service.startingPrice.toLocaleString()}</p>
+      </div>
+    </button>
+  );
+}
+
+function CardInput({ label, placeholder }: { label: string; placeholder: string }) {
+  return (
+    <div>
+      <label style={{ ...labelStyle, marginBottom: 6, display: "block" }}>{label}</label>
+      <input
+        placeholder={placeholder}
+        style={{ width: "100%", background: "transparent", border: "1px solid rgba(255,255,255,0.08)", color: "#f5f7f8", fontSize: 13, padding: "11px 14px", outline: "none", fontFamily: "'Inter', sans-serif", boxSizing: "border-box" }}
+      />
+    </div>
+  );
+}
+
+// ── Shared styles ──────────────────────────────────────────────────────────
+
+const labelStyle: React.CSSProperties = {
+  fontSize: 10, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase",
+  color: "rgba(255,255,255,0.35)", fontFamily: "'Space Grotesk', sans-serif",
+};
+
+const btnPrimary: React.CSSProperties = {
+  display: "inline-flex", alignItems: "center", gap: 8,
+  padding: "12px 24px", background: "#ff5a00", color: "#fff", border: "none",
+  fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase",
+  cursor: "pointer", fontFamily: "'Space Grotesk', sans-serif", transition: "opacity 0.15s",
+};
+
+const btnGhost: React.CSSProperties = {
+  display: "inline-flex", alignItems: "center", gap: 6,
+  padding: "12px 20px", background: "none", border: "1px solid rgba(255,255,255,0.1)",
+  color: "rgba(255,255,255,0.45)", fontSize: 12, fontWeight: 600, cursor: "pointer",
+  letterSpacing: "0.06em", fontFamily: "'Inter', sans-serif",
+};

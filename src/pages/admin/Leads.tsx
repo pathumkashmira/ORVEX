@@ -1,32 +1,15 @@
-import { useState, useCallback, useMemo } from "react";
-import {
-  Plus,
-  Edit2,
-  Trash2,
-  Search,
-  ChevronRight,
-  ChevronLeft,
-  Users,
-  X,
-  DollarSign,
-} from "lucide-react";
+import { useState, useMemo } from "react";
+import { Search, Plus, Edit2, Trash2, ChevronRight, ChevronLeft, LayoutGrid, List } from "lucide-react";
 import AdminLayout from "@/components/AdminLayout";
-import DataTable, { type Column } from "@/components/admin/DataTable";
-import SlideOver from "@/components/admin/SlideOver";
-import ConfirmDialog from "@/components/admin/ConfirmDialog";
 import { useAdmin, type Lead } from "@/contexts/AdminContext";
 import { useToast } from "@/contexts/ToastContext";
+import ConfirmDialog from "@/components/admin/ConfirmDialog";
+import SlideOver from "@/components/admin/SlideOver";
 
-// ── constants ──────────────────────────────────────────────────────────
+const genId = () => Date.now().toString() + Math.random().toString(36).slice(2, 7);
 
-const STAGES: Lead["stage"][] = [
-  "new",
-  "contacted",
-  "qualified",
-  "proposal",
-  "won",
-  "lost",
-];
+const STAGES: Lead["stage"][] = ["new", "contacted", "qualified", "proposal", "won", "lost"];
+const SOURCES: Lead["source"][] = ["website", "referral", "social", "email", "other"];
 
 const STAGE_LABELS: Record<Lead["stage"], string> = {
   new: "New",
@@ -37,691 +20,367 @@ const STAGE_LABELS: Record<Lead["stage"], string> = {
   lost: "Lost",
 };
 
-function stageBadgeClass(stage: Lead["stage"]): string {
-  switch (stage) {
-    case "new":
-      return "admin-badge admin-badge-blue";
-    case "contacted":
-      return "admin-badge admin-badge-yellow";
-    case "qualified":
-      return "admin-badge admin-badge-orange";
-    case "proposal":
-      return "admin-badge admin-badge-blue";
-    case "won":
-      return "admin-badge admin-badge-green";
-    case "lost":
-      return "admin-badge admin-badge-gray";
-    default:
-      return "admin-badge admin-badge-gray";
-  }
+const STAGE_BADGE: Record<Lead["stage"], string> = {
+  new: "admin-badge-blue",
+  contacted: "admin-badge-yellow",
+  qualified: "admin-badge-orange",
+  proposal: "admin-badge-purple",
+  won: "admin-badge-green",
+  lost: "admin-badge-red",
+};
+
+const KANBAN_COLORS: Record<Lead["stage"], string> = {
+  new: "#58a6ff",
+  contacted: "#e3b341",
+  qualified: "#f0883e",
+  proposal: "#bc8cff",
+  won: "#3fb950",
+  lost: "#f85149",
+};
+
+const EMPTY_FORM = {
+  name: "",
+  email: "",
+  company: "",
+  phone: "",
+  source: "website" as Lead["source"],
+  stage: "new" as Lead["stage"],
+  value: 0,
+  notes: "",
+  assignedTo: "Admin",
+};
+
+type FormState = typeof EMPTY_FORM;
+
+function formatCurrency(n: number) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
 }
 
-function stageColumnColor(stage: Lead["stage"]): string {
-  switch (stage) {
-    case "new":
-      return "border-blue-500/30";
-    case "contacted":
-      return "border-yellow-500/30";
-    case "qualified":
-      return "border-orange-500/30";
-    case "proposal":
-      return "border-purple-500/30";
-    case "won":
-      return "border-emerald-500/30";
-    case "lost":
-      return "border-[#30363d]";
-    default:
-      return "border-[#30363d]";
-  }
+function formatDate(d: string) {
+  if (!d) return "—";
+  return new Date(d).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
 }
-
-function newId() {
-  return Math.random().toString(36).slice(2, 10);
-}
-
-function blankLead(): Omit<Lead, "id" | "createdAt" | "updatedAt"> {
-  return {
-    name: "",
-    email: "",
-    company: "",
-    phone: "",
-    projectType: "",
-    budget: "",
-    timeline: "",
-    description: "",
-    stage: "new",
-    source: "",
-    value: 0,
-  };
-}
-
-// ── main component ────────────────────────────────────────────────────
 
 export default function AdminLeads() {
   const { leads, leads_ } = useAdmin();
   const { toast } = useToast();
 
-  const [view, setView] = useState<"table" | "pipeline">("table");
+  const [view, setView] = useState<"table" | "kanban">("table");
   const [search, setSearch] = useState("");
-  const [stageFilter, setStageFilter] = useState<Lead["stage"] | "ALL">("ALL");
-
-  const [slideOpen, setSlideOpen] = useState(false);
+  const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Lead | null>(null);
-  const [confirmId, setConfirmId] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState(false);
-
-  const [form, setForm] =
-    useState<Omit<Lead, "id" | "createdAt" | "updatedAt">>(blankLead());
-
-  // ── derived ───────────────────────────────────────────────────────────
-
-  const totalValue = useMemo(
-    () => leads.reduce((s, l) => s + (l.value || 0), 0),
-    [leads]
-  );
+  const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [confirmDelete, setConfirmDelete] = useState<{ open: boolean; id: string; name: string }>({ open: false, id: "", name: "" });
 
   const filtered = useMemo(() => {
-    const q = search.toLowerCase();
-    return leads.filter((l) => {
-      const matchSearch =
-        !q ||
-        l.name.toLowerCase().includes(q) ||
-        l.company.toLowerCase().includes(q) ||
-        l.email.toLowerCase().includes(q);
-      const matchStage = stageFilter === "ALL" || l.stage === stageFilter;
-      return matchSearch && matchStage;
-    });
-  }, [leads, search, stageFilter]);
+    let list = [...leads];
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      list = list.filter(
+        (l) =>
+          l.name.toLowerCase().includes(q) ||
+          l.company.toLowerCase().includes(q) ||
+          l.email.toLowerCase().includes(q)
+      );
+    }
+    return list.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  }, [leads, search]);
 
-  const leadsPerStage = useMemo(
-    () =>
-      STAGES.reduce(
-        (acc, stage) => {
-          acc[stage] = leads.filter((l) => l.stage === stage);
-          return acc;
-        },
-        {} as Record<Lead["stage"], Lead[]>
-      ),
-    [leads]
-  );
+  const kanbanGroups = useMemo(() => {
+    return STAGES.map((stage) => ({
+      stage,
+      items: leads.filter((l) => l.stage === stage),
+    }));
+  }, [leads]);
 
-  // ── actions ────────────────────────────────────────────────────────────
-
-  const openCreate = useCallback(() => {
+  function openCreate() {
     setEditing(null);
-    setForm(blankLead());
-    setSlideOpen(true);
-  }, []);
+    setForm(EMPTY_FORM);
+    setShowForm(true);
+  }
 
-  const openEdit = useCallback((l: Lead) => {
+  function openEdit(l: Lead) {
     setEditing(l);
-    setForm({
-      name: l.name,
-      email: l.email,
-      company: l.company,
-      phone: l.phone,
-      projectType: l.projectType,
-      budget: l.budget,
-      timeline: l.timeline,
-      description: l.description,
-      stage: l.stage,
-      source: l.source,
-      value: l.value,
-    });
-    setSlideOpen(true);
-  }, []);
+    setForm({ name: l.name, email: l.email, company: l.company, phone: l.phone, source: l.source, stage: l.stage, value: l.value, notes: l.notes, assignedTo: l.assignedTo });
+    setShowForm(true);
+  }
 
-  const handleSave = useCallback(() => {
+  function setField<K extends keyof FormState>(key: K, value: FormState[K]) {
+    setForm((f) => ({ ...f, [key]: value }));
+  }
+
+  function handleSave() {
+    if (!form.name.trim()) { toast.error("Name is required"); return; }
+    if (!form.email.trim()) { toast.error("Email is required"); return; }
     const now = new Date().toISOString().slice(0, 10);
     if (editing) {
-      leads_.update({ ...editing, ...form, updatedAt: now });
+      leads_.edit(editing.id, { ...form, updatedAt: now });
       toast.success("Lead updated");
     } else {
-      leads_.create({
-        id: newId(),
-        ...form,
-        createdAt: now,
-        updatedAt: now,
-      });
+      const item: Lead = { id: genId(), ...form, createdAt: now, updatedAt: now };
+      leads_.add(item);
       toast.success("Lead created");
     }
-    setSlideOpen(false);
-  }, [editing, form, leads_, toast]);
+    setShowForm(false);
+  }
 
-  const handleDelete = useCallback(() => {
-    if (!confirmId) return;
-    setDeleting(true);
-    leads_.remove(confirmId);
-    toast.success("Lead deleted");
-    setDeleting(false);
-    setConfirmId(null);
-  }, [confirmId, leads_, toast]);
+  function handleDelete() {
+    leads_.del(confirmDelete.id);
+    toast.success(`Lead "${confirmDelete.name}" deleted`);
+    setConfirmDelete({ open: false, id: "", name: "" });
+  }
 
-  const moveStage = useCallback(
-    (lead: Lead, direction: "prev" | "next") => {
-      const idx = STAGES.indexOf(lead.stage);
-      const newIdx = direction === "next" ? idx + 1 : idx - 1;
-      if (newIdx < 0 || newIdx >= STAGES.length) return;
-      const newStage = STAGES[newIdx];
-      leads_.update({
-        ...lead,
-        stage: newStage,
-        updatedAt: new Date().toISOString().slice(0, 10),
-      });
-      toast.info(`Lead moved to ${STAGE_LABELS[newStage]}`);
-    },
-    [leads_, toast]
-  );
-
-  // ── table columns ──────────────────────────────────────────────────────
-
-  const columns: Column<Lead>[] = [
-    {
-      key: "name",
-      label: "Name / Company",
-      sortable: true,
-      render: (l) => (
-        <div>
-          <p className="text-[#e6edf3] font-medium text-sm">{l.name}</p>
-          <p className="text-[#7d8590] text-xs mt-0.5">{l.company}</p>
-        </div>
-      ),
-    },
-    {
-      key: "email",
-      label: "Contact",
-      render: (l) => (
-        <div>
-          <p className="text-[#7d8590] text-xs">{l.email}</p>
-          {l.phone && (
-            <p className="text-[#7d8590] text-xs mt-0.5">{l.phone}</p>
-          )}
-        </div>
-      ),
-    },
-    {
-      key: "projectType",
-      label: "Project Type",
-      sortable: true,
-      render: (l) => (
-        <span className="text-[#e6edf3] text-sm">{l.projectType || "—"}</span>
-      ),
-    },
-    {
-      key: "budget",
-      label: "Budget",
-      render: (l) => (
-        <span className="text-[#7d8590] text-sm">{l.budget || "—"}</span>
-      ),
-    },
-    {
-      key: "timeline",
-      label: "Timeline",
-      render: (l) => (
-        <span className="text-[#7d8590] text-sm">{l.timeline || "—"}</span>
-      ),
-    },
-    {
-      key: "stage",
-      label: "Stage",
-      sortable: true,
-      render: (l) => (
-        <span className={stageBadgeClass(l.stage)}>
-          {STAGE_LABELS[l.stage]}
-        </span>
-      ),
-    },
-    {
-      key: "value",
-      label: "Value",
-      sortable: true,
-      render: (l) => (
-        <span className="text-[#e6edf3] font-mono text-sm">
-          {l.value ? `$${l.value.toLocaleString()}` : "—"}
-        </span>
-      ),
-    },
-    {
-      key: "createdAt",
-      label: "Created",
-      sortable: true,
-      render: (l) => (
-        <span className="text-[#7d8590] text-xs">{l.createdAt}</span>
-      ),
-    },
-    {
-      key: "actions",
-      label: "Actions",
-      render: (l) => (
-        <div className="flex items-center gap-1">
-          <button
-            className="admin-btn admin-btn-ghost admin-btn-sm text-[#7d8590] hover:text-[#e6edf3]"
-            title="Move back"
-            onClick={(e) => {
-              e.stopPropagation();
-              moveStage(l, "prev");
-            }}
-            disabled={l.stage === STAGES[0]}
-          >
-            <ChevronLeft size={13} />
-          </button>
-          <button
-            className="admin-btn admin-btn-ghost admin-btn-sm text-[#7d8590] hover:text-[#e6edf3]"
-            title="Move forward"
-            onClick={(e) => {
-              e.stopPropagation();
-              moveStage(l, "next");
-            }}
-            disabled={l.stage === STAGES[STAGES.length - 1]}
-          >
-            <ChevronRight size={13} />
-          </button>
-          <button
-            className="admin-btn admin-btn-ghost admin-btn-sm"
-            onClick={(e) => {
-              e.stopPropagation();
-              openEdit(l);
-            }}
-          >
-            <Edit2 size={12} />
-          </button>
-          <button
-            className="admin-btn admin-btn-ghost admin-btn-sm hover:text-red-400"
-            onClick={(e) => {
-              e.stopPropagation();
-              setConfirmId(l.id);
-            }}
-          >
-            <Trash2 size={12} />
-          </button>
-        </div>
-      ),
-    },
-  ];
-
-  // ── render ─────────────────────────────────────────────────────────────
+  function moveStage(l: Lead, direction: "forward" | "back") {
+    const idx = STAGES.indexOf(l.stage);
+    const next = direction === "forward" ? STAGES[idx + 1] : STAGES[idx - 1];
+    if (!next) return;
+    leads_.edit(l.id, { stage: next, updatedAt: new Date().toISOString().slice(0, 10) });
+    toast.success(`${l.name} moved to ${STAGE_LABELS[next]}`);
+  }
 
   return (
     <AdminLayout>
       <div className="admin-page">
-        {/* Header */}
         <div className="admin-page-header">
           <div>
             <h1 className="admin-heading">Leads</h1>
-            <div className="flex items-center gap-3 mt-1">
-              <span className="text-[#7d8590] text-sm">
-                {leads.length} lead{leads.length !== 1 ? "s" : ""}
-              </span>
-              <span className="text-[#30363d]">·</span>
-              <span className="text-[#ff5a00] text-sm font-mono font-medium flex items-center gap-1">
-                <DollarSign size={13} />
-                {totalValue.toLocaleString()} pipeline
-              </span>
-            </div>
+            <p style={{ color: "#7d8590", fontSize: 13, margin: 0 }}>
+              {leads.length} total leads
+            </p>
           </div>
-          <div className="flex items-center gap-3">
-            {/* View toggle */}
-            <div className="flex items-center border border-[#30363d] rounded overflow-hidden">
+          <div style={{ display: "flex", gap: 10 }}>
+            <div style={{ display: "flex", background: "#161b22", border: "1px solid #30363d", borderRadius: 8, overflow: "hidden" }}>
               <button
+                style={{ padding: "7px 12px", background: view === "table" ? "#21262d" : "transparent", border: "none", color: view === "table" ? "#e6edf3" : "#7d8590", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}
                 onClick={() => setView("table")}
-                className={`px-3 py-1.5 text-xs transition-colors ${
-                  view === "table"
-                    ? "bg-[#ff5a00] text-white"
-                    : "text-[#7d8590] hover:text-[#e6edf3]"
-                }`}
               >
-                Table
+                <List size={14} /> Table
               </button>
               <button
-                onClick={() => setView("pipeline")}
-                className={`px-3 py-1.5 text-xs transition-colors ${
-                  view === "pipeline"
-                    ? "bg-[#ff5a00] text-white"
-                    : "text-[#7d8590] hover:text-[#e6edf3]"
-                }`}
+                style={{ padding: "7px 12px", background: view === "kanban" ? "#21262d" : "transparent", border: "none", color: view === "kanban" ? "#e6edf3" : "#7d8590", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}
+                onClick={() => setView("kanban")}
               >
-                Pipeline
+                <LayoutGrid size={14} /> Kanban
               </button>
             </div>
             <button className="admin-btn admin-btn-primary" onClick={openCreate}>
-              <Plus size={14} /> New Lead
+              <Plus size={14} style={{ marginRight: 6 }} />
+              New Lead
             </button>
           </div>
         </div>
 
-        <div className="admin-body">
-          {view === "table" ? (
-            <>
-              {/* Filters */}
-              <div className="flex flex-wrap items-center gap-3 mb-4">
-                <div className="relative flex-1 min-w-[200px]">
-                  <Search
-                    size={14}
-                    className="absolute left-3 top-1/2 -translate-y-1/2 text-[#7d8590]"
-                  />
-                  <input
-                    className="admin-input pl-9"
-                    placeholder="Search name, company, email..."
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                  />
-                </div>
-                <select
-                  className="admin-select w-auto"
-                  value={stageFilter}
-                  onChange={(e) =>
-                    setStageFilter(e.target.value as Lead["stage"] | "ALL")
-                  }
-                >
-                  <option value="ALL">All Stages</option>
-                  {STAGES.map((s) => (
-                    <option key={s} value={s}>
-                      {STAGE_LABELS[s]}
-                    </option>
-                  ))}
-                </select>
-                {(search || stageFilter !== "ALL") && (
-                  <button
-                    className="admin-btn admin-btn-ghost admin-btn-sm"
-                    onClick={() => {
-                      setSearch("");
-                      setStageFilter("ALL");
-                    }}
-                  >
-                    <X size={12} /> Clear
-                  </button>
+        <div className="admin-filter-bar">
+          <div style={{ position: "relative" }}>
+            <span className="admin-search-icon">
+              <Search size={14} />
+            </span>
+            <input
+              className="admin-search"
+              placeholder="Search leads…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+        </div>
+
+        {view === "table" && (
+          <div className="admin-card admin-table-wrap">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Company</th>
+                  <th>Stage</th>
+                  <th>Value</th>
+                  <th>Source</th>
+                  <th>Assigned To</th>
+                  <th>Updated</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={8}>
+                      <div className="admin-empty">No leads found</div>
+                    </td>
+                  </tr>
                 )}
-              </div>
-              <DataTable
-                data={filtered}
-                columns={columns}
-                emptyMessage="No leads match your filters."
-                emptyIcon={<Users size={32} />}
-                onRowClick={openEdit}
-              />
-            </>
-          ) : (
-            /* Pipeline / Kanban view */
-            <div className="overflow-x-auto pb-4">
-              <div className="flex gap-3 min-w-max">
-                {STAGES.map((stage) => {
-                  const stageLeads = leadsPerStage[stage];
-                  const stageValue = stageLeads.reduce(
-                    (s, l) => s + (l.value || 0),
-                    0
-                  );
-                  return (
-                    <div
-                      key={stage}
-                      className={`w-64 flex flex-col border-t-2 ${stageColumnColor(stage)} bg-[#161b22] rounded-lg overflow-hidden`}
-                    >
-                      {/* Column header */}
-                      <div className="px-3 py-2.5 border-b border-[#30363d] flex items-center justify-between">
-                        <div>
-                          <span
-                            className={`text-xs font-semibold uppercase tracking-wider ${stageBadgeClass(stage).replace("admin-badge ", "")}`}
+                {filtered.map((l) => (
+                  <tr key={l.id}>
+                    <td>
+                      <div style={{ fontWeight: 600, color: "#e6edf3" }}>{l.name}</div>
+                      <div style={{ fontSize: 12, color: "#7d8590" }}>{l.email}</div>
+                    </td>
+                    <td style={{ color: "#c9d1d9", fontSize: 13 }}>{l.company || "—"}</td>
+                    <td><span className={`admin-badge ${STAGE_BADGE[l.stage]}`}>{STAGE_LABELS[l.stage]}</span></td>
+                    <td style={{ fontWeight: 700, color: "#e6edf3" }}>{l.value ? formatCurrency(l.value) : "—"}</td>
+                    <td style={{ fontSize: 12, color: "#7d8590", textTransform: "capitalize" }}>{l.source}</td>
+                    <td style={{ fontSize: 13, color: "#c9d1d9" }}>{l.assignedTo}</td>
+                    <td style={{ fontSize: 12, color: "#7d8590", whiteSpace: "nowrap" }}>{formatDate(l.updatedAt)}</td>
+                    <td>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button className="admin-btn admin-btn-secondary admin-btn-sm" onClick={() => openEdit(l)} title="Edit">
+                          <Edit2 size={12} />
+                        </button>
+                        <button
+                          className="admin-btn admin-btn-danger admin-btn-sm"
+                          onClick={() => setConfirmDelete({ open: true, id: l.id, name: l.name })}
+                          title="Delete"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {view === "kanban" && (
+          <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 8 }}>
+            {kanbanGroups.map(({ stage, items }) => (
+              <div key={stage} style={{ flex: "0 0 220px", minWidth: 220 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: KANBAN_COLORS[stage] }} />
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "#e6edf3" }}>{STAGE_LABELS[stage]}</span>
+                  </div>
+                  <span style={{ fontSize: 12, color: "#7d8590", background: "#21262d", borderRadius: 10, padding: "1px 7px" }}>{items.length}</span>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {items.map((l) => {
+                    const stageIdx = STAGES.indexOf(l.stage);
+                    return (
+                      <div key={l.id} style={{ background: "#161b22", border: "1px solid #21262d", borderRadius: 8, padding: "12px 14px" }}>
+                        <div style={{ fontWeight: 600, color: "#e6edf3", fontSize: 13, marginBottom: 2 }}>{l.name}</div>
+                        <div style={{ fontSize: 12, color: "#7d8590", marginBottom: 8 }}>{l.company}</div>
+                        {l.value > 0 && (
+                          <div style={{ fontSize: 13, fontWeight: 700, color: KANBAN_COLORS[stage], marginBottom: 10 }}>{formatCurrency(l.value)}</div>
+                        )}
+                        <div style={{ display: "flex", gap: 4 }}>
+                          {stageIdx > 0 && (
+                            <button
+                              style={{ flex: 1, fontSize: 11, padding: "3px 0", background: "#0d1117", border: "1px solid #30363d", borderRadius: 4, color: "#7d8590", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 3 }}
+                              onClick={() => moveStage(l, "back")}
+                            >
+                              <ChevronLeft size={10} /> Back
+                            </button>
+                          )}
+                          {stageIdx < STAGES.length - 1 && (
+                            <button
+                              style={{ flex: 1, fontSize: 11, padding: "3px 0", background: "#0d1117", border: "1px solid #30363d", borderRadius: 4, color: "#58a6ff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 3 }}
+                              onClick={() => moveStage(l, "forward")}
+                            >
+                              Forward <ChevronRight size={10} />
+                            </button>
+                          )}
+                        </div>
+                        <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
+                          <button className="admin-btn admin-btn-secondary admin-btn-sm" style={{ flex: 1, justifyContent: "center" }} onClick={() => openEdit(l)}>
+                            <Edit2 size={10} />
+                          </button>
+                          <button
+                            className="admin-btn admin-btn-danger admin-btn-sm"
+                            style={{ flex: 1, justifyContent: "center" }}
+                            onClick={() => setConfirmDelete({ open: true, id: l.id, name: l.name })}
                           >
-                            {STAGE_LABELS[stage]}
-                          </span>
-                          <p className="text-[#7d8590] text-xs mt-0.5">
-                            {stageLeads.length} lead
-                            {stageLeads.length !== 1 ? "s" : ""}
-                            {stageValue > 0 &&
-                              ` · $${stageValue.toLocaleString()}`}
-                          </p>
+                            <Trash2 size={10} />
+                          </button>
                         </div>
                       </div>
-
-                      {/* Cards */}
-                      <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-2 max-h-[560px]">
-                        {stageLeads.length === 0 && (
-                          <p className="text-[#7d8590] text-xs text-center py-6">
-                            No leads
-                          </p>
-                        )}
-                        {stageLeads.map((l) => {
-                          const stageIdx = STAGES.indexOf(l.stage);
-                          return (
-                            <div
-                              key={l.id}
-                              className="admin-card p-3 cursor-pointer hover:border-[#7d8590] transition-colors"
-                              onClick={() => openEdit(l)}
-                            >
-                              <p className="text-[#e6edf3] text-sm font-medium truncate">
-                                {l.name}
-                              </p>
-                              <p className="text-[#7d8590] text-xs truncate">
-                                {l.company}
-                              </p>
-                              {l.projectType && (
-                                <p className="text-[#7d8590] text-xs mt-1.5 line-clamp-1">
-                                  {l.projectType}
-                                </p>
-                              )}
-                              {l.value > 0 && (
-                                <p className="text-[#ff5a00] text-xs font-mono mt-1">
-                                  ${l.value.toLocaleString()}
-                                </p>
-                              )}
-                              <div className="flex items-center gap-1 mt-2 pt-2 border-t border-[#30363d]">
-                                <button
-                                  className="admin-btn admin-btn-ghost admin-btn-sm text-[#7d8590] flex-1 justify-center"
-                                  disabled={stageIdx === 0}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    moveStage(l, "prev");
-                                  }}
-                                  title="Move back"
-                                >
-                                  <ChevronLeft size={12} />
-                                </button>
-                                <button
-                                  className="admin-btn admin-btn-ghost admin-btn-sm text-[#7d8590] flex-1 justify-center"
-                                  disabled={stageIdx === STAGES.length - 1}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    moveStage(l, "next");
-                                  }}
-                                  title="Move forward"
-                                >
-                                  <ChevronRight size={12} />
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
+                    );
+                  })}
+                  {items.length === 0 && (
+                    <div style={{ border: "1px dashed #21262d", borderRadius: 8, padding: "16px 12px", textAlign: "center", color: "#484f58", fontSize: 12 }}>
+                      No leads
                     </div>
-                  );
-                })}
+                  )}
+                </div>
               </div>
-            </div>
-          )}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* Create / Edit SlideOver */}
       <SlideOver
-        open={slideOpen}
-        onClose={() => setSlideOpen(false)}
+        open={showForm}
+        onClose={() => setShowForm(false)}
         title={editing ? "Edit Lead" : "New Lead"}
-        subtitle={editing ? editing.name : "Add a new lead to your pipeline"}
+        subtitle={editing ? editing.company : "Add a new lead"}
         width="lg"
         footer={
-          <div className="flex gap-3 justify-end">
-            <button
-              className="admin-btn admin-btn-secondary"
-              onClick={() => setSlideOpen(false)}
-            >
-              Cancel
-            </button>
+          <>
+            <button className="admin-btn admin-btn-ghost" onClick={() => setShowForm(false)}>Cancel</button>
             <button className="admin-btn admin-btn-primary" onClick={handleSave}>
               {editing ? "Save Changes" : "Create Lead"}
             </button>
-          </div>
+          </>
         }
       >
-        <div className="flex flex-col gap-4">
-          <div className="grid grid-cols-2 gap-4">
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          <div className="admin-form-grid">
             <div className="admin-field">
-              <label className="admin-field-label">Full Name</label>
-              <input
-                className="admin-input"
-                value={form.name}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, name: e.target.value }))
-                }
-                placeholder="Jane Smith"
-              />
+              <label className="admin-field-label">Name *</label>
+              <input className="admin-input" value={form.name} onChange={(e) => setField("name", e.target.value)} placeholder="Full name" />
             </div>
             <div className="admin-field">
-              <label className="admin-field-label">Company</label>
-              <input
-                className="admin-input"
-                value={form.company}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, company: e.target.value }))
-                }
-                placeholder="Acme Inc."
-              />
+              <label className="admin-field-label">Email *</label>
+              <input className="admin-input" type="email" value={form.email} onChange={(e) => setField("email", e.target.value)} placeholder="email@example.com" />
             </div>
           </div>
-
-          <div className="grid grid-cols-2 gap-4">
+          <div className="admin-form-grid">
             <div className="admin-field">
-              <label className="admin-field-label">Email</label>
-              <input
-                type="email"
-                className="admin-input"
-                value={form.email}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, email: e.target.value }))
-                }
-                placeholder="jane@acme.com"
-              />
+              <label className="admin-field-label">Company</label>
+              <input className="admin-input" value={form.company} onChange={(e) => setField("company", e.target.value)} placeholder="Company name" />
             </div>
             <div className="admin-field">
               <label className="admin-field-label">Phone</label>
-              <input
-                type="tel"
-                className="admin-input"
-                value={form.phone}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, phone: e.target.value }))
-                }
-                placeholder="+1 555 000 0000"
-              />
+              <input className="admin-input" value={form.phone} onChange={(e) => setField("phone", e.target.value)} placeholder="+1 555 000 0000" />
             </div>
           </div>
-
-          <div className="grid grid-cols-2 gap-4">
+          <div className="admin-form-grid">
             <div className="admin-field">
-              <label className="admin-field-label">Project Type</label>
-              <input
-                className="admin-input"
-                value={form.projectType}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, projectType: e.target.value }))
-                }
-                placeholder="Brand Identity"
-              />
-            </div>
-            <div className="admin-field">
-              <label className="admin-field-label">Budget</label>
-              <input
-                className="admin-input"
-                value={form.budget}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, budget: e.target.value }))
-                }
-                placeholder="$5,000 – $10,000"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="admin-field">
-              <label className="admin-field-label">Timeline</label>
-              <input
-                className="admin-input"
-                value={form.timeline}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, timeline: e.target.value }))
-                }
-                placeholder="Q3 2026"
-              />
-            </div>
-            <div className="admin-field">
-              <label className="admin-field-label">Estimated Value ($)</label>
-              <input
-                type="number"
-                className="admin-input"
-                value={form.value}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, value: Number(e.target.value) }))
-                }
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="admin-field">
-              <label className="admin-field-label">Stage</label>
-              <select
-                className="admin-select"
-                value={form.stage}
-                onChange={(e) =>
-                  setForm((f) => ({
-                    ...f,
-                    stage: e.target.value as Lead["stage"],
-                  }))
-                }
-              >
-                {STAGES.map((s) => (
-                  <option key={s} value={s}>
-                    {STAGE_LABELS[s]}
-                  </option>
-                ))}
+              <label className="admin-field-label">Source</label>
+              <select className="admin-select" value={form.source} onChange={(e) => setField("source", e.target.value as Lead["source"])}>
+                {SOURCES.map((s) => <option key={s} value={s} style={{ textTransform: "capitalize" }}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
               </select>
             </div>
             <div className="admin-field">
-              <label className="admin-field-label">Source</label>
-              <input
-                className="admin-input"
-                value={form.source}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, source: e.target.value }))
-                }
-                placeholder="Website, Referral, etc."
-              />
+              <label className="admin-field-label">Stage</label>
+              <select className="admin-select" value={form.stage} onChange={(e) => setField("stage", e.target.value as Lead["stage"])}>
+                {STAGES.map((s) => <option key={s} value={s}>{STAGE_LABELS[s]}</option>)}
+              </select>
             </div>
           </div>
-
+          <div className="admin-form-grid">
+            <div className="admin-field">
+              <label className="admin-field-label">Value (USD)</label>
+              <input className="admin-input" type="number" min={0} value={form.value} onChange={(e) => setField("value", Number(e.target.value))} placeholder="0" />
+            </div>
+            <div className="admin-field">
+              <label className="admin-field-label">Assigned To</label>
+              <input className="admin-input" value={form.assignedTo} onChange={(e) => setField("assignedTo", e.target.value)} placeholder="Admin" />
+            </div>
+          </div>
           <div className="admin-field">
-            <label className="admin-field-label">Description</label>
-            <textarea
-              className="admin-textarea"
-              rows={4}
-              value={form.description}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, description: e.target.value }))
-              }
-              placeholder="Project details and notes..."
-            />
+            <label className="admin-field-label">Notes</label>
+            <textarea className="admin-textarea" rows={4} value={form.notes} onChange={(e) => setField("notes", e.target.value)} placeholder="Lead notes, context, requirements…" />
           </div>
         </div>
       </SlideOver>
 
-      {/* Delete confirm */}
       <ConfirmDialog
-        open={!!confirmId}
+        open={confirmDelete.open}
         title="Delete Lead"
-        description="This will permanently delete the lead and all associated data. This cannot be undone."
-        confirmLabel="Delete Lead"
+        description={`Are you sure you want to delete lead "${confirmDelete.name}"? This action cannot be undone.`}
+        confirmLabel="Delete"
         destructive
-        loading={deleting}
         onConfirm={handleDelete}
-        onCancel={() => setConfirmId(null)}
+        onCancel={() => setConfirmDelete({ open: false, id: "", name: "" })}
       />
     </AdminLayout>
   );

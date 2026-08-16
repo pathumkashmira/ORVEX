@@ -1,120 +1,149 @@
-import { useState } from "react";
 import ClientLayout from "@/components/ClientLayout";
-import { CreditCard, Plus, Shield } from "lucide-react";
+import { useAdmin, type Payment } from "@/contexts/AdminContext";
+import { useApp } from "@/contexts/AppContext";
 
-const PAYMENT_HISTORY = [
-  { id: "1", date: "2026-08-01", description: "AXIOM CGI Campaign — Deposit", amount: 3800, method: "Visa •••• 4242", status: "success" },
-  { id: "2", date: "2026-06-20", description: "Brand Motion Package — Final payment", amount: 4500, method: "Visa •••• 4242", status: "success" },
-  { id: "3", date: "2026-06-01", description: "Brand Motion Package — Deposit", amount: 2250, method: "Mastercard •••• 7890", status: "success" },
-  { id: "4", date: "2026-04-15", description: "Product Visualization — Full payment", amount: 3200, method: "Visa •••• 4242", status: "success" },
-];
+const METHOD_LABELS: Record<Payment["method"], string> = {
+  stripe: "Stripe / Card",
+  bank_transfer: "Bank Transfer",
+  crypto: "Crypto",
+  paypal: "PayPal",
+};
+
+const STATUS_DOT: Record<Payment["status"], string> = {
+  completed: "bg-green-400",
+  pending: "bg-yellow-400",
+  failed: "bg-red-400",
+  refunded: "bg-[#bfc5cc]/40",
+};
+
+const STATUS_BADGE: Record<Payment["status"], string> = {
+  completed: "badge-green",
+  pending: "badge-orange",
+  failed: "badge-red",
+  refunded: "badge-gray",
+};
 
 export default function ClientPayments() {
-  const [showAdd, setShowAdd] = useState(false);
+  const { payments } = useAdmin();
+  const { user } = useApp();
+
+  const userPayments = payments.filter((p) => p.email === user?.email);
+  const displayPayments = userPayments.length > 0 ? userPayments : payments;
+
+  const totalPaid = displayPayments
+    .filter((p) => p.status === "completed")
+    .reduce((s, p) => s + p.amount, 0);
+
+  const pendingAmount = displayPayments
+    .filter((p) => p.status === "pending")
+    .reduce((s, p) => s + p.amount, 0);
+
+  const completedPayments = displayPayments.filter((p) => p.status === "completed");
+  const lastPaymentDate =
+    completedPayments.length > 0
+      ? completedPayments.sort((a, b) => b.processedAt.localeCompare(a.processedAt))[0].processedAt
+      : "—";
 
   return (
     <ClientLayout>
-      <div className="p-8 max-w-[800px]">
+      <div className="p-8 max-w-[1000px]">
         <div className="mb-8">
           <p className="label-sm text-[#bfc5cc]/40 mb-1">CLIENT PORTAL</p>
-          <h1 className="text-2xl font-700 text-[#f5f7f8]" style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700 }}>PAYMENTS</h1>
+          <h1
+            className="text-2xl text-[#f5f7f8]"
+            style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700 }}
+          >
+            PAYMENTS
+          </h1>
         </div>
 
-        {/* Saved methods */}
-        <div className="mb-10">
-          <div className="flex items-center justify-between mb-4">
-            <p className="label-sm">PAYMENT METHODS</p>
-            <button onClick={() => setShowAdd(!showAdd)} className="btn-ghost text-xs flex items-center gap-1">
-              <Plus size={11} /> ADD METHOD
-            </button>
+        {/* Stats row */}
+        <div className="grid grid-cols-3 gap-4 mb-10">
+          <div className="stat-card">
+            <p className="label-sm text-[#bfc5cc]/40 mb-2">TOTAL PAID</p>
+            <p
+              className="text-2xl text-[#f5f7f8]"
+              style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700 }}
+            >
+              ${totalPaid.toLocaleString()}
+            </p>
           </div>
+          <div className="stat-card">
+            <p className="label-sm text-[#bfc5cc]/40 mb-2">PENDING</p>
+            <p
+              className="text-2xl text-[#f5f7f8]"
+              style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700 }}
+            >
+              ${pendingAmount.toLocaleString()}
+            </p>
+          </div>
+          <div className="stat-card">
+            <p className="label-sm text-[#bfc5cc]/40 mb-2">LAST PAYMENT</p>
+            <p
+              className="text-2xl text-[#f5f7f8]"
+              style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700 }}
+            >
+              {lastPaymentDate.slice(0, 10)}
+            </p>
+          </div>
+        </div>
 
-          {showAdd && (
-            <div className="border border-[#ff5a00]/20 bg-[#14171b] p-6 mb-4">
-              <p className="label-sm mb-4">ADD NEW CARD</p>
-              <div className="space-y-4">
-                <div>
-                  <label className="orvex-label">Card number</label>
-                  <input className="orvex-input" placeholder="•••• •••• •••• ••••" />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="orvex-label">Expiry</label>
-                    <input className="orvex-input" placeholder="MM / YY" />
-                  </div>
-                  <div>
-                    <label className="orvex-label">CVC</label>
-                    <input className="orvex-input" placeholder="•••" />
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 text-[#bfc5cc]/40 text-xs">
-                  <Shield size={11} /> Secured by Stripe. ORVEX does not store card data.
-                </div>
-                <div className="flex gap-3">
-                  <button className="btn-primary">SAVE CARD</button>
-                  <button onClick={() => setShowAdd(false)} className="btn-ghost">CANCEL</button>
-                </div>
-              </div>
+        {/* Payments table */}
+        <div className="border border-white/5 overflow-hidden">
+          {displayPayments.length === 0 ? (
+            <div className="p-8 text-center">
+              <p className="text-[#bfc5cc]/40 text-sm">No payment records found.</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="orvex-table w-full">
+                <thead>
+                  <tr>
+                    <th>REF</th>
+                    <th>INVOICE</th>
+                    <th>AMOUNT</th>
+                    <th>METHOD</th>
+                    <th>STATUS</th>
+                    <th>PROCESSED</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {displayPayments.map((p) => (
+                    <tr key={p.id}>
+                      <td>
+                        <p
+                          className="text-xs text-[#f5f7f8]"
+                          style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700 }}
+                        >
+                          {p.paymentRef}
+                        </p>
+                      </td>
+                      <td>
+                        <p className="text-[#bfc5cc] text-xs">{p.invoiceNumber}</p>
+                      </td>
+                      <td>
+                        <p className="text-[#f5f7f8] text-xs">${p.amount.toLocaleString()}</p>
+                      </td>
+                      <td>
+                        <p className="text-[#bfc5cc] text-xs">{METHOD_LABELS[p.method] ?? p.method}</p>
+                      </td>
+                      <td>
+                        <div className="flex items-center gap-2">
+                          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${STATUS_DOT[p.status] ?? "bg-[#bfc5cc]/40"}`} />
+                          <span className={`badge ${STATUS_BADGE[p.status] ?? "badge-gray"}`}>
+                            {p.status.toUpperCase()}
+                          </span>
+                        </div>
+                      </td>
+                      <td>
+                        <p className="label-sm text-[#bfc5cc]/40">{p.processedAt.slice(0, 10)}</p>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
-
-          <div className="space-y-3">
-            {[
-              { brand: "VISA", last4: "4242", expiry: "09/28", default: true },
-              { brand: "MC", last4: "7890", expiry: "03/27", default: false },
-            ].map((card) => (
-              <div key={card.last4} className={`flex items-center justify-between border p-4 ${card.default ? "border-[#ff5a00]/20 bg-[#14171b]" : "border-white/5"}`}>
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-7 bg-[#1d2126] border border-white/10 flex items-center justify-center">
-                    <span className="text-[8px] font-700 text-[#bfc5cc]" style={{ fontWeight: 700 }}>{card.brand}</span>
-                  </div>
-                  <div>
-                    <p className="text-[#f5f7f8] text-sm">•••• {card.last4}</p>
-                    <p className="label-sm text-[#bfc5cc]/40">Expires {card.expiry}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  {card.default && <span className="badge badge-orange">DEFAULT</span>}
-                  {!card.default && <button className="label-sm text-[#bfc5cc]/40 hover:text-[#ff5a00] transition-colors">SET DEFAULT</button>}
-                  <button className="label-sm text-[#bfc5cc]/40 hover:text-red-400 transition-colors">REMOVE</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Payment history */}
-        <div>
-          <p className="label-sm mb-4">PAYMENT HISTORY</p>
-          <div className="border border-white/5 overflow-hidden">
-            <table className="orvex-table w-full">
-              <thead>
-                <tr>
-                  <th>DATE</th>
-                  <th>DESCRIPTION</th>
-                  <th>METHOD</th>
-                  <th>AMOUNT</th>
-                  <th>STATUS</th>
-                </tr>
-              </thead>
-              <tbody>
-                {PAYMENT_HISTORY.map((p) => (
-                  <tr key={p.id}>
-                    <td><p className="label-sm text-[#bfc5cc]/40">{p.date}</p></td>
-                    <td><p className="text-[#bfc5cc] text-xs">{p.description}</p></td>
-                    <td>
-                      <div className="flex items-center gap-2">
-                        <CreditCard size={11} className="text-[#bfc5cc]/40" />
-                        <p className="text-[#bfc5cc] text-xs">{p.method}</p>
-                      </div>
-                    </td>
-                    <td><p className="text-[#f5f7f8] text-xs">${p.amount.toLocaleString()}</p></td>
-                    <td><span className="badge badge-green">{p.status.toUpperCase()}</span></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
         </div>
       </div>
     </ClientLayout>

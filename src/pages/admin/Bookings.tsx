@@ -1,537 +1,316 @@
-import { useState, useCallback, useMemo } from "react";
-import {
-  Calendar,
-  Check,
-  X,
-  Edit2,
-  Clock,
-  User,
-  Mail,
-  Building2,
-  Phone,
-  FileText,
-  Search,
-} from "lucide-react";
+import { useState, useMemo } from "react";
+import { Search, Plus, Edit2, Trash2, CheckCircle, XCircle } from "lucide-react";
 import AdminLayout from "@/components/AdminLayout";
-import DataTable, { type Column } from "@/components/admin/DataTable";
-import SlideOver from "@/components/admin/SlideOver";
-import ConfirmDialog from "@/components/admin/ConfirmDialog";
-import { useAdmin } from "@/contexts/AdminContext";
+import { useAdmin, type Booking } from "@/contexts/AdminContext";
 import { useToast } from "@/contexts/ToastContext";
-import type { Booking } from "@/data/seed";
+import ConfirmDialog from "@/components/admin/ConfirmDialog";
+import SlideOver from "@/components/admin/SlideOver";
 
-// ── helpers ──────────────────────────────────────────────────────────
+const genId = () => Date.now().toString() + Math.random().toString(36).slice(2, 7);
 
-const BOOKING_TYPES = [
-  "ALL",
-  "Discovery Call",
-  "Project Consultation",
-  "Creative Consultation",
-];
+const STATUSES: Booking["status"][] = ["pending", "confirmed", "rescheduled", "completed", "cancelled", "no_show"];
+const TYPES = ["Discovery Call", "Project Consultation", "Creative Consultation", "Follow-up"];
 
-const STATUS_OPTIONS = ["ALL", "confirmed", "pending", "cancelled", "completed"];
+const EMPTY_FORM = {
+  name: "",
+  email: "",
+  company: "",
+  phone: "",
+  type: "Discovery Call",
+  date: "",
+  time: "",
+  status: "pending" as Booking["status"],
+  notes: "",
+};
 
-function statusBadgeClass(status: string): string {
-  switch (status) {
-    case "confirmed":
-      return "admin-badge admin-badge-green";
-    case "pending":
-      return "admin-badge admin-badge-yellow";
-    case "cancelled":
-      return "admin-badge admin-badge-red";
-    case "completed":
-      return "admin-badge admin-badge-gray";
-    default:
-      return "admin-badge admin-badge-gray";
-  }
+type FormState = typeof EMPTY_FORM;
+
+function statusBadge(s: Booking["status"]) {
+  const map: Record<Booking["status"], string> = {
+    confirmed: "admin-badge-green",
+    pending: "admin-badge-yellow",
+    completed: "admin-badge-blue",
+    cancelled: "admin-badge-red",
+    rescheduled: "admin-badge-purple",
+    no_show: "admin-badge-gray",
+  };
+  const label = s.replace("_", " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  return <span className={`admin-badge ${map[s]}`}>{label}</span>;
 }
-
-function formatDate(dateStr: string) {
-  if (!dateStr) return "—";
-  try {
-    return new Date(dateStr + "T00:00:00").toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-  } catch {
-    return dateStr;
-  }
-}
-
-function isToday(dateStr: string) {
-  return dateStr === new Date().toISOString().slice(0, 10);
-}
-
-// ── main component ────────────────────────────────────────────────────
 
 export default function AdminBookings() {
   const { bookings, bookings_ } = useAdmin();
   const { toast } = useToast();
 
-  // filters
   const [search, setSearch] = useState("");
-  const [typeFilter, setTypeFilter] = useState("ALL");
-  const [statusFilter, setStatusFilter] = useState("ALL");
-  const [dateFilter, setDateFilter] = useState("");
-
-  // detail slide-over
-  const [detailOpen, setDetailOpen] = useState(false);
-  const [selected, setSelected] = useState<Booking | null>(null);
-  const [editStatus, setEditStatus] = useState<Booking["status"]>("pending");
-  const [editNotes, setEditNotes] = useState("");
-
-  // cancel confirm
-  const [cancelId, setCancelId] = useState<string | null>(null);
-  const [cancelling, setCancelling] = useState(false);
-
-  // ── derived stats ──────────────────────────────────────────────────
-
-  const today = new Date().toISOString().slice(0, 10);
-  const upcoming = bookings.filter(
-    (b) => b.date >= today && b.status !== "cancelled"
-  ).length;
-  const todayCount = bookings.filter((b) => isToday(b.date)).length;
-
-  const stats = useMemo(
-    () => ({
-      total: bookings.length,
-      confirmed: bookings.filter((b) => b.status === "confirmed").length,
-      pending: bookings.filter((b) => b.status === "pending").length,
-      cancelled: bookings.filter(
-        (b) => b.status === "cancelled" || b.status === "completed"
-      ).length,
-    }),
-    [bookings]
-  );
-
-  // ── filtered list ──────────────────────────────────────────────────
+  const [statusFilter, setStatusFilter] = useState<"all" | Booking["status"]>("all");
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<Booking | null>(null);
+  const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [confirmDelete, setConfirmDelete] = useState<{ open: boolean; id: string; ref: string }>({ open: false, id: "", ref: "" });
 
   const filtered = useMemo(() => {
-    const q = search.toLowerCase();
-    return bookings.filter((b) => {
-      const matchSearch =
-        !q ||
-        b.name.toLowerCase().includes(q) ||
-        b.company.toLowerCase().includes(q) ||
-        b.bookingRef.toLowerCase().includes(q);
-      const matchType =
-        typeFilter === "ALL" ||
-        b.type.toLowerCase() === typeFilter.toLowerCase();
-      const matchStatus =
-        statusFilter === "ALL" || b.status === statusFilter;
-      const matchDate = !dateFilter || b.date === dateFilter;
-      return matchSearch && matchType && matchStatus && matchDate;
-    });
-  }, [bookings, search, typeFilter, statusFilter, dateFilter]);
+    let list = [...bookings];
+    if (statusFilter !== "all") list = list.filter((b) => b.status === statusFilter);
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      list = list.filter(
+        (b) =>
+          b.bookingRef.toLowerCase().includes(q) ||
+          b.name.toLowerCase().includes(q) ||
+          b.email.toLowerCase().includes(q) ||
+          b.company.toLowerCase().includes(q)
+      );
+    }
+    return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }, [bookings, search, statusFilter]);
 
-  // ── actions ────────────────────────────────────────────────────────
+  function openCreate() {
+    setEditing(null);
+    setForm(EMPTY_FORM);
+    setShowForm(true);
+  }
 
-  const openDetail = useCallback((b: Booking) => {
-    setSelected(b);
-    setEditStatus(b.status);
-    setEditNotes(b.notes || "");
-    setDetailOpen(true);
-  }, []);
+  function openEdit(b: Booking) {
+    setEditing(b);
+    setForm({ name: b.name, email: b.email, company: b.company, phone: b.phone, type: b.type, date: b.date, time: b.time, status: b.status, notes: b.notes });
+    setShowForm(true);
+  }
 
-  const handleConfirm = useCallback(
-    (b: Booking) => {
-      bookings_.update({ ...b, status: "confirmed" });
-      toast.success(`Booking ${b.bookingRef} confirmed`);
-    },
-    [bookings_, toast]
-  );
+  function setField<K extends keyof FormState>(key: K, value: FormState[K]) {
+    setForm((f) => ({ ...f, [key]: value }));
+  }
 
-  const handleCancel = useCallback(() => {
-    if (!cancelId) return;
-    const b = bookings.find((x) => x.id === cancelId);
-    if (!b) return;
-    setCancelling(true);
-    bookings_.update({ ...b, status: "cancelled" });
-    toast.success(`Booking ${b.bookingRef} cancelled`);
-    setCancelling(false);
-    setCancelId(null);
-  }, [cancelId, bookings, bookings_, toast]);
+  function handleSave() {
+    if (!form.name.trim()) { toast.error("Name is required"); return; }
+    if (!form.email.trim()) { toast.error("Email is required"); return; }
+    if (!form.date.trim()) { toast.error("Date is required"); return; }
+    if (editing) {
+      bookings_.edit(editing.id, { ...form });
+      toast.success("Booking updated");
+    } else {
+      const bookingRef = "BK-" + Date.now().toString().slice(-6);
+      const item: Booking = { id: genId(), bookingRef, ...form, createdAt: new Date().toISOString().slice(0, 10) };
+      bookings_.add(item);
+      toast.success("Booking created");
+    }
+    setShowForm(false);
+  }
 
-  const handleSaveDetail = useCallback(() => {
-    if (!selected) return;
-    bookings_.update({ ...selected, status: editStatus, notes: editNotes });
-    toast.success("Booking updated");
-    setDetailOpen(false);
-  }, [selected, editStatus, editNotes, bookings_, toast]);
+  function handleDelete() {
+    bookings_.del(confirmDelete.id);
+    toast.success(`Booking "${confirmDelete.ref}" deleted`);
+    setConfirmDelete({ open: false, id: "", ref: "" });
+  }
 
-  // ── table columns ──────────────────────────────────────────────────
+  function quickStatus(b: Booking, status: Booking["status"]) {
+    bookings_.edit(b.id, { status });
+    toast.success(`Booking marked as ${status.replace("_", " ")}`);
+  }
 
-  const columns: Column<Booking>[] = [
-    {
-      key: "bookingRef",
-      label: "Ref",
-      sortable: true,
-      width: "100px",
-      render: (b) => (
-        <span className="font-mono text-xs text-[#ff5a00] font-medium">
-          {b.bookingRef}
-        </span>
-      ),
-    },
-    {
-      key: "name",
-      label: "Name / Email",
-      sortable: true,
-      render: (b) => (
-        <div>
-          <p className="text-[#e6edf3] text-sm font-medium">{b.name}</p>
-          <p className="text-[#7d8590] text-xs mt-0.5">{b.email}</p>
-        </div>
-      ),
-    },
-    {
-      key: "company",
-      label: "Company",
-      sortable: true,
-      render: (b) => (
-        <span className="text-[#7d8590] text-sm">{b.company || "—"}</span>
-      ),
-    },
-    {
-      key: "type",
-      label: "Type",
-      sortable: true,
-      render: (b) => (
-        <span className="text-[#e6edf3] text-xs">{b.type}</span>
-      ),
-    },
-    {
-      key: "date",
-      label: "Date / Time",
-      sortable: true,
-      render: (b) => (
-        <div>
-          <p className="text-[#e6edf3] text-sm">{formatDate(b.date)}</p>
-          <p className="text-[#7d8590] text-xs flex items-center gap-1 mt-0.5">
-            <Clock size={10} /> {b.time}
-          </p>
-        </div>
-      ),
-    },
-    {
-      key: "status",
-      label: "Status",
-      sortable: true,
-      render: (b) => (
-        <span className={statusBadgeClass(b.status)}>
-          {b.status}
-        </span>
-      ),
-    },
-    {
-      key: "notes",
-      label: "Notes",
-      render: (b) =>
-        b.notes ? (
-          <span className="text-[#7d8590] text-xs line-clamp-1 max-w-[140px]">
-            {b.notes}
-          </span>
-        ) : (
-          <span className="text-[#30363d] text-xs">—</span>
-        ),
-    },
-    {
-      key: "actions",
-      label: "Actions",
-      render: (b) => (
-        <div className="flex items-center gap-1">
-          {b.status === "pending" && (
-            <button
-              className="admin-btn admin-btn-sm bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleConfirm(b);
-              }}
-            >
-              <Check size={11} /> Confirm
-            </button>
-          )}
-          {(b.status === "pending" || b.status === "confirmed") && (
-            <button
-              className="admin-btn admin-btn-ghost admin-btn-sm hover:text-red-400"
-              onClick={(e) => {
-                e.stopPropagation();
-                setCancelId(b.id);
-              }}
-            >
-              <X size={12} />
-            </button>
-          )}
-          <button
-            className="admin-btn admin-btn-ghost admin-btn-sm"
-            onClick={(e) => {
-              e.stopPropagation();
-              openDetail(b);
-            }}
-          >
-            <Edit2 size={12} />
-          </button>
-        </div>
-      ),
-    },
-  ];
-
-  // ── render ─────────────────────────────────────────────────────────
+  function formatDate(d: string) {
+    if (!d) return "—";
+    return new Date(d).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+  }
 
   return (
     <AdminLayout>
       <div className="admin-page">
-        {/* Header */}
         <div className="admin-page-header">
-          <div className="flex items-start gap-4">
-            <div>
-              <h1 className="admin-heading">Bookings</h1>
-              <div className="flex items-center gap-3 mt-1">
-                <span className="admin-badge admin-badge-orange">
-                  {upcoming} upcoming
-                </span>
-                {todayCount > 0 && (
-                  <span className="admin-badge admin-badge-green">
-                    {todayCount} today
-                  </span>
-                )}
-              </div>
-            </div>
+          <div>
+            <h1 className="admin-heading">Bookings</h1>
+            <p style={{ color: "#7d8590", fontSize: 13, margin: 0 }}>
+              {filtered.length} of {bookings.length} bookings
+            </p>
           </div>
-          <div className="flex items-center gap-2 text-[#7d8590] text-sm">
-            <Calendar size={14} />
-            <span>
-              {new Date().toLocaleDateString("en-US", {
-                weekday: "long",
-                month: "long",
-                day: "numeric",
-                year: "numeric",
-              })}
-            </span>
-          </div>
+          <button className="admin-btn admin-btn-primary" onClick={openCreate}>
+            <Plus size={14} style={{ marginRight: 6 }} />
+            New Booking
+          </button>
         </div>
 
-        <div className="admin-body">
-          {/* Stat mini-cards */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-            {[
-              { label: "Total", value: stats.total, color: "text-[#e6edf3]" },
-              {
-                label: "Confirmed",
-                value: stats.confirmed,
-                color: "text-emerald-400",
-              },
-              {
-                label: "Pending",
-                value: stats.pending,
-                color: "text-yellow-400",
-              },
-              {
-                label: "Cancelled / Done",
-                value: stats.cancelled,
-                color: "text-[#7d8590]",
-              },
-            ].map((s) => (
-              <div key={s.label} className="admin-stat-card">
-                <p className="text-[#7d8590] text-xs mb-1">{s.label}</p>
-                <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
-              </div>
-            ))}
-          </div>
-
-          {/* Filter bar */}
-          <div className="flex flex-wrap items-center gap-3 mb-4">
-            <div className="relative flex-1 min-w-[200px]">
-              <Search
-                size={14}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-[#7d8590]"
-              />
-              <input
-                className="admin-input pl-9"
-                placeholder="Search name, company, ref..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </div>
-            <select
-              className="admin-select w-auto"
-              value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value)}
-            >
-              {BOOKING_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {t === "ALL" ? "All Types" : t}
-                </option>
-              ))}
-            </select>
-            <select
-              className="admin-select w-auto"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-            >
-              {STATUS_OPTIONS.map((s) => (
-                <option key={s} value={s}>
-                  {s === "ALL" ? "All Statuses" : s}
-                </option>
-              ))}
-            </select>
+        <div className="admin-filter-bar">
+          <div style={{ position: "relative" }}>
+            <span className="admin-search-icon">
+              <Search size={14} />
+            </span>
             <input
-              type="date"
-              className="admin-input w-auto"
-              value={dateFilter}
-              onChange={(e) => setDateFilter(e.target.value)}
+              className="admin-search"
+              placeholder="Search bookings…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
             />
-            {(search || typeFilter !== "ALL" || statusFilter !== "ALL" || dateFilter) && (
-              <button
-                className="admin-btn admin-btn-ghost admin-btn-sm"
-                onClick={() => {
-                  setSearch("");
-                  setTypeFilter("ALL");
-                  setStatusFilter("ALL");
-                  setDateFilter("");
-                }}
-              >
-                <X size={12} /> Clear
-              </button>
-            )}
           </div>
+          <select
+            className="admin-select"
+            style={{ maxWidth: 180 }}
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
+          >
+            <option value="all">All Statuses</option>
+            {STATUSES.map((s) => (
+              <option key={s} value={s}>{s.replace("_", " ").replace(/\b\w/g, (c) => c.toUpperCase())}</option>
+            ))}
+          </select>
+        </div>
 
-          <DataTable
-            data={filtered}
-            columns={columns}
-            emptyMessage="No bookings match your filters."
-            emptyIcon={<Calendar size={32} />}
-            onRowClick={openDetail}
-          />
+        <div className="admin-card admin-table-wrap">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>Ref</th>
+                <th>Client</th>
+                <th>Company</th>
+                <th>Type</th>
+                <th>Date / Time</th>
+                <th>Status</th>
+                <th>Notes</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.length === 0 && (
+                <tr>
+                  <td colSpan={8}>
+                    <div className="admin-empty">No bookings found</div>
+                  </td>
+                </tr>
+              )}
+              {filtered.map((b) => (
+                <tr key={b.id}>
+                  <td style={{ fontFamily: "monospace", fontSize: 12, color: "#58a6ff", fontWeight: 600, whiteSpace: "nowrap" }}>
+                    {b.bookingRef}
+                  </td>
+                  <td>
+                    <div style={{ fontWeight: 600, color: "#e6edf3" }}>{b.name}</div>
+                    <div style={{ fontSize: 12, color: "#7d8590" }}>{b.email}</div>
+                  </td>
+                  <td style={{ color: "#c9d1d9", fontSize: 13 }}>{b.company || "—"}</td>
+                  <td style={{ color: "#7d8590", fontSize: 12 }}>{b.type}</td>
+                  <td style={{ fontSize: 12, whiteSpace: "nowrap" }}>
+                    <div style={{ color: "#c9d1d9" }}>{formatDate(b.date)}</div>
+                    <div style={{ color: "#7d8590" }}>{b.time || "—"}</div>
+                  </td>
+                  <td>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {statusBadge(b.status)}
+                      {b.status === "pending" && (
+                        <div style={{ display: "flex", gap: 4 }}>
+                          <button
+                            style={{ background: "rgba(35,134,54,0.15)", color: "#3fb950", border: "1px solid rgba(35,134,54,0.3)", borderRadius: 4, fontSize: 11, padding: "2px 7px", cursor: "pointer", display: "flex", alignItems: "center", gap: 3 }}
+                            onClick={() => quickStatus(b, "confirmed")}
+                          >
+                            <CheckCircle size={10} /> Confirm
+                          </button>
+                          <button
+                            style={{ background: "rgba(248,81,73,0.1)", color: "#f85149", border: "1px solid rgba(248,81,73,0.2)", borderRadius: 4, fontSize: 11, padding: "2px 7px", cursor: "pointer", display: "flex", alignItems: "center", gap: 3 }}
+                            onClick={() => quickStatus(b, "cancelled")}
+                          >
+                            <XCircle size={10} /> Cancel
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </td>
+                  <td style={{ maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12, color: "#7d8590" }}>
+                    {b.notes || "—"}
+                  </td>
+                  <td>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button className="admin-btn admin-btn-secondary admin-btn-sm" onClick={() => openEdit(b)} title="Edit">
+                        <Edit2 size={12} />
+                      </button>
+                      <button
+                        className="admin-btn admin-btn-danger admin-btn-sm"
+                        onClick={() => setConfirmDelete({ open: true, id: b.id, ref: b.bookingRef })}
+                        title="Delete"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
 
-      {/* Detail SlideOver */}
-      {selected && (
-        <SlideOver
-          open={detailOpen}
-          onClose={() => setDetailOpen(false)}
-          title="Booking Detail"
-          subtitle={selected.bookingRef}
-          width="lg"
-          footer={
-            <div className="flex gap-3 justify-end">
-              <button
-                className="admin-btn admin-btn-secondary"
-                onClick={() => setDetailOpen(false)}
-              >
-                Close
-              </button>
-              <button
-                className="admin-btn admin-btn-primary"
-                onClick={handleSaveDetail}
-              >
-                Save Changes
-              </button>
-            </div>
-          }
-        >
-          <div className="flex flex-col gap-5">
-            {/* Contact block */}
-            <div className="admin-card flex flex-col gap-3">
-              <h3 className="admin-heading-sm mb-1">Contact</h3>
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div className="flex items-center gap-2 text-[#7d8590]">
-                  <User size={13} />
-                  <span className="text-[#e6edf3]">{selected.name}</span>
-                </div>
-                <div className="flex items-center gap-2 text-[#7d8590]">
-                  <Building2 size={13} />
-                  <span className="text-[#e6edf3]">
-                    {selected.company || "—"}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 text-[#7d8590]">
-                  <Mail size={13} />
-                  <span className="text-[#e6edf3] text-xs">{selected.email}</span>
-                </div>
-                <div className="flex items-center gap-2 text-[#7d8590]">
-                  <Phone size={13} />
-                  <span className="text-[#e6edf3]">
-                    {selected.phone || "—"}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Booking info */}
-            <div className="admin-card flex flex-col gap-3">
-              <h3 className="admin-heading-sm mb-1">Booking Info</h3>
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div>
-                  <p className="text-[#7d8590] text-xs">Type</p>
-                  <p className="text-[#e6edf3] mt-0.5">{selected.type}</p>
-                </div>
-                <div>
-                  <p className="text-[#7d8590] text-xs">Date</p>
-                  <p className="text-[#e6edf3] mt-0.5">
-                    {formatDate(selected.date)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[#7d8590] text-xs">Time</p>
-                  <p className="text-[#e6edf3] mt-0.5">{selected.time}</p>
-                </div>
-                <div>
-                  <p className="text-[#7d8590] text-xs">Created</p>
-                  <p className="text-[#e6edf3] mt-0.5 text-xs">
-                    {selected.createdAt}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Status */}
+      <SlideOver
+        open={showForm}
+        onClose={() => setShowForm(false)}
+        title={editing ? "Edit Booking" : "New Booking"}
+        subtitle={editing ? editing.bookingRef : "Create a new booking"}
+        width="lg"
+        footer={
+          <>
+            <button className="admin-btn admin-btn-ghost" onClick={() => setShowForm(false)}>Cancel</button>
+            <button className="admin-btn admin-btn-primary" onClick={handleSave}>
+              {editing ? "Save Changes" : "Create Booking"}
+            </button>
+          </>
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          <div className="admin-form-grid">
             <div className="admin-field">
-              <label className="admin-field-label">Status</label>
-              <select
-                className="admin-select"
-                value={editStatus}
-                onChange={(e) =>
-                  setEditStatus(e.target.value as Booking["status"])
-                }
-              >
-                <option value="pending">Pending</option>
-                <option value="confirmed">Confirmed</option>
-                <option value="cancelled">Cancelled</option>
-                <option value="completed">Completed</option>
-              </select>
+              <label className="admin-field-label">Name *</label>
+              <input className="admin-input" value={form.name} onChange={(e) => setField("name", e.target.value)} placeholder="Full name" />
             </div>
-
-            {/* Notes */}
             <div className="admin-field">
-              <label className="admin-field-label">
-                <FileText size={12} className="inline mr-1" />
-                Notes
-              </label>
-              <textarea
-                className="admin-textarea"
-                rows={4}
-                value={editNotes}
-                onChange={(e) => setEditNotes(e.target.value)}
-                placeholder="Add internal notes about this booking..."
-              />
+              <label className="admin-field-label">Email *</label>
+              <input className="admin-input" type="email" value={form.email} onChange={(e) => setField("email", e.target.value)} placeholder="email@example.com" />
             </div>
           </div>
-        </SlideOver>
-      )}
+          <div className="admin-form-grid">
+            <div className="admin-field">
+              <label className="admin-field-label">Company</label>
+              <input className="admin-input" value={form.company} onChange={(e) => setField("company", e.target.value)} placeholder="Company name" />
+            </div>
+            <div className="admin-field">
+              <label className="admin-field-label">Phone</label>
+              <input className="admin-input" value={form.phone} onChange={(e) => setField("phone", e.target.value)} placeholder="+1 555 000 0000" />
+            </div>
+          </div>
+          <div className="admin-field">
+            <label className="admin-field-label">Type</label>
+            <select className="admin-select" value={form.type} onChange={(e) => setField("type", e.target.value)}>
+              {TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <div className="admin-form-grid">
+            <div className="admin-field">
+              <label className="admin-field-label">Date *</label>
+              <input className="admin-input" type="date" value={form.date} onChange={(e) => setField("date", e.target.value)} />
+            </div>
+            <div className="admin-field">
+              <label className="admin-field-label">Time</label>
+              <input className="admin-input" type="time" value={form.time} onChange={(e) => setField("time", e.target.value)} />
+            </div>
+          </div>
+          <div className="admin-field">
+            <label className="admin-field-label">Status</label>
+            <select className="admin-select" value={form.status} onChange={(e) => setField("status", e.target.value as Booking["status"])}>
+              {STATUSES.map((s) => (
+                <option key={s} value={s}>{s.replace("_", " ").replace(/\b\w/g, (c) => c.toUpperCase())}</option>
+              ))}
+            </select>
+          </div>
+          <div className="admin-field">
+            <label className="admin-field-label">Notes</label>
+            <textarea className="admin-textarea" rows={4} value={form.notes} onChange={(e) => setField("notes", e.target.value)} placeholder="Additional notes…" />
+          </div>
+        </div>
+      </SlideOver>
 
-      {/* Cancel confirm */}
       <ConfirmDialog
-        open={!!cancelId}
-        title="Cancel Booking"
-        description="Are you sure you want to cancel this booking? The client will need to re-book."
-        confirmLabel="Cancel Booking"
+        open={confirmDelete.open}
+        title="Delete Booking"
+        description={`Are you sure you want to delete booking "${confirmDelete.ref}"? This action cannot be undone.`}
+        confirmLabel="Delete"
         destructive
-        loading={cancelling}
-        onConfirm={handleCancel}
-        onCancel={() => setCancelId(null)}
+        onConfirm={handleDelete}
+        onCancel={() => setConfirmDelete({ open: false, id: "", ref: "" })}
       />
     </AdminLayout>
   );

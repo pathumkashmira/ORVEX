@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Save, AlertTriangle, RotateCcw } from "lucide-react";
 import AdminLayout from "@/components/AdminLayout";
 import { useAdmin } from "@/contexts/AdminContext";
 import { useToast } from "@/contexts/ToastContext";
@@ -6,48 +7,49 @@ import ConfirmDialog from "@/components/admin/ConfirmDialog";
 import type { SystemSettings } from "@/contexts/AdminContext";
 
 const TIMEZONES = [
-  "America/Los_Angeles",
-  "America/Denver",
-  "America/Chicago",
+  "UTC",
   "America/New_York",
+  "America/Chicago",
+  "America/Denver",
+  "America/Los_Angeles",
+  "America/Sao_Paulo",
   "Europe/London",
   "Europe/Paris",
   "Europe/Berlin",
+  "Europe/Moscow",
   "Asia/Dubai",
   "Asia/Kolkata",
+  "Asia/Singapore",
   "Asia/Tokyo",
+  "Asia/Seoul",
   "Australia/Sydney",
+  "Pacific/Auckland",
 ];
 
-const CURRENCIES = ["USD", "EUR", "GBP", "CAD", "AUD", "JPY"];
-
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
   return (
     <button
-      role="switch"
-      aria-checked={checked}
-      onClick={() => onChange(!checked)}
+      type="button"
+      onClick={() => onChange(!value)}
       style={{
         position: "relative",
-        display: "inline-flex",
-        alignItems: "center",
         width: 44,
         height: 24,
         borderRadius: 12,
-        background: checked ? "#ff5a00" : "#30363d",
         border: "none",
         cursor: "pointer",
+        background: value ? "#ff5a00" : "#30363d",
         transition: "background 0.2s",
         flexShrink: 0,
-        padding: 0,
       }}
     >
       <span
         style={{
           position: "absolute",
-          left: checked ? "calc(100% - 20px)" : 4,
-          width: 16,
-          height: 16,
+          top: 3,
+          left: value ? 23 : 3,
+          width: 18,
+          height: 18,
           borderRadius: "50%",
           background: "#fff",
           transition: "left 0.2s",
@@ -57,241 +59,187 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
   );
 }
 
-function ToggleRow({
-  label,
-  description,
-  checked,
-  onChange,
-}: {
-  label: string;
-  description?: string;
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-4 py-3 border-b border-[#21262d] last:border-0">
-      <div>
-        <p className="text-sm font-medium text-[#e6edf3]">{label}</p>
-        {description && <p className="text-xs text-[#7d8590] mt-0.5">{description}</p>}
-      </div>
-      <Toggle checked={checked} onChange={onChange} />
-    </div>
-  );
-}
-
 export default function AdminSettings() {
-  const { settings, updateSettings, resetStore } = useAdmin();
-  const { toast } = useToast();
-  const [form, setForm] = useState<SystemSettings>({ ...settings });
-  const [showReset, setShowReset] = useState(false);
+  const ctx = useAdmin();
+  const { toast } = useToast(); const success = toast.success;
+  const [form, setForm] = useState<SystemSettings>({ ...ctx.settings });
+  const [resetOpen, setResetOpen] = useState(false);
 
   const set = <K extends keyof SystemSettings>(k: K, v: SystemSettings[K]) =>
-    setForm((prev) => ({ ...prev, [k]: v }));
+    setForm((f) => ({ ...f, [k]: v }));
 
   const handleSave = () => {
-    updateSettings(form);
-    toast.success("Settings saved");
+    ctx.updateSettings(form);
+    success("Settings saved successfully.");
   };
 
   const handleReset = () => {
-    resetStore();
-    toast.success("Store reset to defaults");
-    setShowReset(false);
+    ctx.resetStore();
+    success("Admin store has been reset to defaults.");
+    setResetOpen(false);
   };
 
   return (
     <AdminLayout>
-      <div className="admin-page" style={{ maxWidth: 800 }}>
-        {/* Maintenance Banner */}
-        {form.maintenanceMode && (
-          <div
-            style={{
-              background: "rgba(210,153,34,0.1)",
-              border: "1px solid rgba(210,153,34,0.3)",
-              borderRadius: 8,
-              padding: "12px 16px",
-              marginBottom: 24,
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              color: "#d29922",
-              fontSize: 14,
-            }}
-          >
-            <span style={{ fontSize: 18 }}>⚠</span>
-            <span>
-              <strong>Maintenance Mode is ON.</strong> The public site is currently inaccessible to visitors.
-            </span>
-          </div>
-        )}
-
-        {/* Header */}
+      <div className="admin-page" style={{ maxWidth: 860 }}>
         <div className="admin-page-header">
           <div>
-            <h1 className="admin-heading">Site Settings</h1>
-            <p className="text-sm text-[#7d8590] mt-1">Studio configuration and feature flags</p>
+            <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.1em", color: "#484f58", textTransform: "uppercase", marginBottom: 4 }}>SYSTEM</p>
+            <h1 className="admin-heading">Settings</h1>
           </div>
           <button className="admin-btn admin-btn-primary" onClick={handleSave}>
-            Save Changes
+            <Save size={14} /> Save Changes
           </button>
         </div>
 
-        <div className="space-y-6">
-          {/* Studio Info */}
-          <div className="admin-card">
-            <h2 className="admin-heading-sm mb-5">Studio Info</h2>
-            <div className="space-y-4">
-              <div className="admin-field">
-                <label className="admin-field-label">Studio Name</label>
-                <input
-                  className="admin-input"
-                  value={form.studioName}
-                  onChange={(e) => set("studioName", e.target.value)}
-                />
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="admin-field">
-                  <label className="admin-field-label">Contact Email</label>
-                  <input
-                    className="admin-input"
-                    type="email"
-                    value={form.email}
-                    onChange={(e) => set("email", e.target.value)}
-                  />
-                </div>
-                <div className="admin-field">
-                  <label className="admin-field-label">Phone</label>
-                  <input
-                    className="admin-input"
-                    value={form.phone}
-                    onChange={(e) => set("phone", e.target.value)}
-                  />
-                </div>
-              </div>
-              <div className="admin-field">
-                <label className="admin-field-label">Address</label>
-                <textarea
-                  className="admin-input admin-textarea"
-                  value={form.address}
-                  onChange={(e) => set("address", e.target.value)}
-                  rows={2}
-                  style={{ minHeight: 64 }}
-                />
-              </div>
+        {/* Maintenance mode banner */}
+        {form.maintenanceMode && (
+          <div style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(210,153,34,0.1)", border: "1px solid rgba(210,153,34,0.3)", borderRadius: 8, padding: "12px 16px", marginBottom: 24 }}>
+            <AlertTriangle size={16} color="#d29922" />
+            <p style={{ fontSize: 13, color: "#d29922", fontWeight: 500 }}>Maintenance Mode is active. The public-facing site is currently unavailable to visitors.</p>
+          </div>
+        )}
+
+        {/* Studio Info */}
+        <div style={{ marginBottom: 28 }}>
+          <p style={{ fontSize: 11, fontWeight: 600, color: "#484f58", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 14, paddingBottom: 8, borderBottom: "1px solid #21262d" }}>Studio Info</p>
+          <div className="admin-form-grid" style={{ marginBottom: 16 }}>
+            <div className="admin-field">
+              <label className="admin-field-label">Studio Name</label>
+              <input className="admin-input" value={form.studioName} onChange={(e) => set("studioName", e.target.value)} />
+            </div>
+            <div className="admin-field">
+              <label className="admin-field-label">Email</label>
+              <input className="admin-input" type="email" value={form.email} onChange={(e) => set("email", e.target.value)} />
             </div>
           </div>
-
-          {/* Financial */}
-          <div className="admin-card">
-            <h2 className="admin-heading-sm mb-5">Financial</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="admin-field">
-                <label className="admin-field-label">Currency</label>
-                <select
-                  className="admin-input admin-select"
-                  value={form.currency}
-                  onChange={(e) => set("currency", e.target.value)}
-                >
-                  {CURRENCIES.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="admin-field">
-                <label className="admin-field-label">Tax Rate (%)</label>
-                <input
-                  className="admin-input"
-                  type="number"
-                  min={0}
-                  max={30}
-                  step={0.5}
-                  value={form.taxRate}
-                  onChange={(e) => set("taxRate", parseFloat(e.target.value) || 0)}
-                />
-              </div>
-              <div className="admin-field">
-                <label className="admin-field-label">Deposit (%)</label>
-                <input
-                  className="admin-input"
-                  type="number"
-                  min={0}
-                  max={100}
-                  step={5}
-                  value={form.depositPercent}
-                  onChange={(e) => set("depositPercent", parseFloat(e.target.value) || 0)}
-                />
-              </div>
+          <div className="admin-form-grid" style={{ marginBottom: 16 }}>
+            <div className="admin-field">
+              <label className="admin-field-label">Phone</label>
+              <input className="admin-input" type="tel" value={form.phone} onChange={(e) => set("phone", e.target.value)} placeholder="+1 (555) 000-0000" />
             </div>
           </div>
+          <div className="admin-field">
+            <label className="admin-field-label">Address</label>
+            <textarea
+              className="admin-input admin-textarea"
+              value={form.address}
+              onChange={(e) => set("address", e.target.value)}
+              rows={2}
+            />
+          </div>
+        </div>
 
-          {/* Localization */}
-          <div className="admin-card">
-            <h2 className="admin-heading-sm mb-5">Localization</h2>
-            <div className="admin-field" style={{ maxWidth: 320 }}>
+        {/* Financial */}
+        <div style={{ marginBottom: 28 }}>
+          <p style={{ fontSize: 11, fontWeight: 600, color: "#484f58", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 14, paddingBottom: 8, borderBottom: "1px solid #21262d" }}>Financial</p>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
+            <div className="admin-field">
+              <label className="admin-field-label">Currency</label>
+              <select className="admin-input admin-select" value={form.currency} onChange={(e) => set("currency", e.target.value)}>
+                <option value="USD">USD — US Dollar</option>
+                <option value="EUR">EUR — Euro</option>
+                <option value="GBP">GBP — British Pound</option>
+                <option value="CAD">CAD — Canadian Dollar</option>
+                <option value="AUD">AUD — Australian Dollar</option>
+              </select>
+            </div>
+            <div className="admin-field">
+              <label className="admin-field-label">Tax Rate (%)</label>
+              <input
+                className="admin-input"
+                type="number"
+                min={0}
+                max={100}
+                step={0.1}
+                value={form.taxRate}
+                onChange={(e) => set("taxRate", Number(e.target.value))}
+              />
+            </div>
+            <div className="admin-field">
+              <label className="admin-field-label">Deposit (%)</label>
+              <input
+                className="admin-input"
+                type="number"
+                min={0}
+                max={100}
+                step={5}
+                value={form.depositPercent}
+                onChange={(e) => set("depositPercent", Number(e.target.value))}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Localization */}
+        <div style={{ marginBottom: 28 }}>
+          <p style={{ fontSize: 11, fontWeight: 600, color: "#484f58", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 14, paddingBottom: 8, borderBottom: "1px solid #21262d" }}>Localization</p>
+          <div style={{ maxWidth: 320 }}>
+            <div className="admin-field">
               <label className="admin-field-label">Timezone</label>
-              <select
-                className="admin-input admin-select"
-                value={form.timezone}
-                onChange={(e) => set("timezone", e.target.value)}
-              >
+              <select className="admin-input admin-select" value={form.timezone} onChange={(e) => set("timezone", e.target.value)}>
                 {TIMEZONES.map((tz) => (
                   <option key={tz} value={tz}>{tz}</option>
                 ))}
               </select>
             </div>
           </div>
+        </div>
 
-          {/* Features */}
-          <div className="admin-card">
-            <h2 className="admin-heading-sm mb-2">Features</h2>
-            <ToggleRow
-              label="Maintenance Mode"
-              description="Puts the public site into maintenance mode"
-              checked={form.maintenanceMode}
-              onChange={(v) => set("maintenanceMode", v)}
-            />
-            <ToggleRow
-              label="Email Notifications"
-              description="Send email alerts for new orders, bookings, and messages"
-              checked={form.emailNotifications}
-              onChange={(v) => set("emailNotifications", v)}
-            />
-            <ToggleRow
-              label="Booking Enabled"
-              description="Allow clients to book discovery calls through the site"
-              checked={form.bookingEnabled}
-              onChange={(v) => set("bookingEnabled", v)}
-            />
-          </div>
-
-          {/* Danger Zone */}
-          <div
-            className="admin-card"
-            style={{ border: "1px solid rgba(248,81,73,0.25)" }}
-          >
-            <h2 className="admin-heading-sm mb-2" style={{ color: "#f85149" }}>Danger Zone</h2>
-            <p className="text-sm text-[#7d8590] mb-4">
-              Destructive actions that cannot be undone. Proceed with caution.
-            </p>
-            <button
-              className="admin-btn admin-btn-danger"
-              onClick={() => setShowReset(true)}
-            >
-              Reset Admin Store
-            </button>
+        {/* Features */}
+        <div style={{ marginBottom: 36 }}>
+          <p style={{ fontSize: 11, fontWeight: 600, color: "#484f58", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 14, paddingBottom: 8, borderBottom: "1px solid #21262d" }}>Features</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+            {([
+              { key: "maintenanceMode" as const, label: "Maintenance Mode", desc: "Puts the public site into maintenance mode. Visitors will see a maintenance page." },
+              { key: "emailNotifications" as const, label: "Email Notifications", desc: "Send automated email notifications for new orders, bookings, and messages." },
+              { key: "bookingEnabled" as const, label: "Booking System", desc: "Allow clients to book discovery calls and consultations through the site." },
+            ] as { key: keyof Pick<SystemSettings, "maintenanceMode" | "emailNotifications" | "bookingEnabled">; label: string; desc: string }[]).map((f, i, arr) => (
+              <div
+                key={f.key}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 20,
+                  padding: "14px 0",
+                  borderBottom: i < arr.length - 1 ? "1px solid #21262d" : "none",
+                }}
+              >
+                <div>
+                  <p style={{ fontSize: 13, fontWeight: 600, color: "#e6edf3", marginBottom: 2 }}>{f.label}</p>
+                  <p style={{ fontSize: 12, color: "#7d8590" }}>{f.desc}</p>
+                </div>
+                <Toggle value={form[f.key]} onChange={(v) => set(f.key, v)} />
+              </div>
+            ))}
           </div>
         </div>
 
-        <ConfirmDialog
-          open={showReset}
-          title="Reset Admin Store"
-          description="This will permanently reset all data to factory defaults. All orders, customers, and content will be lost. Are you sure?"
-          confirmLabel="Reset Everything"
-          destructive
-          onConfirm={handleReset}
-          onCancel={() => setShowReset(false)}
-        />
+        {/* Danger Zone */}
+        <div style={{ border: "1px solid rgba(248,81,73,0.3)", borderRadius: 8, padding: 20 }}>
+          <p style={{ fontSize: 11, fontWeight: 600, color: "#f85149", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 8 }}>Danger Zone</p>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
+            <div>
+              <p style={{ fontSize: 13, fontWeight: 600, color: "#e6edf3", marginBottom: 4 }}>Reset Admin Store</p>
+              <p style={{ fontSize: 12, color: "#7d8590" }}>Wipes all admin data and resets the store to seed defaults. This cannot be undone.</p>
+            </div>
+            <button className="admin-btn admin-btn-danger" onClick={() => setResetOpen(true)}>
+              <RotateCcw size={13} /> Reset Store
+            </button>
+          </div>
+        </div>
       </div>
+
+      <ConfirmDialog
+        open={resetOpen}
+        title="Reset Admin Store"
+        description="This will delete all data and restore the store to its seed defaults. Are you absolutely sure?"
+        confirmLabel="Reset Everything"
+        destructive
+        onConfirm={handleReset}
+        onCancel={() => setResetOpen(false)}
+      />
     </AdminLayout>
   );
 }

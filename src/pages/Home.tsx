@@ -4,6 +4,9 @@ import { ArrowRight, ArrowUpRight } from "lucide-react";
 import Layout from "@/components/Layout";
 import { projects, services, testimonials } from "@/data/seed";
 import { useApp } from "@/contexts/AppContext";
+import TextMaskReveal from "@/components/motion/TextMaskReveal";
+import MagneticButton from "@/components/motion/MagneticButton";
+import { useInView } from "@/motion/useInView";
 
 /* ─────────────────────────────────────────────────────
    Orbital scene — pure CSS 3D animation
@@ -125,13 +128,25 @@ function Ticker() {
 }
 
 /* ─────────────────────────────────────────────────────
-   Scroll-reveal hook
+   Scroll-reveal hook — adds .visible + stagger delay
 ───────────────────────────────────────────────────── */
 function useReveal() {
   useEffect(() => {
-    const els = document.querySelectorAll(".reveal, .reveal-slow");
+    const els = document.querySelectorAll<HTMLElement>(
+      ".reveal, .reveal-slow, .reveal-left, .reveal-scale, .stat-reveal"
+    );
     const obs = new IntersectionObserver(
-      (entries) => { entries.forEach((e) => { if (e.isIntersecting) e.target.classList.add("visible"); }); },
+      (entries) => {
+        entries.forEach((e) => {
+          if (e.isIntersecting) {
+            const el = e.target as HTMLElement;
+            const delay = el.dataset.delay ?? "0";
+            el.style.transitionDelay = `${delay}s`;
+            el.classList.add("visible");
+            obs.unobserve(el);
+          }
+        });
+      },
       { threshold: 0.08 }
     );
     els.forEach((el) => obs.observe(el));
@@ -146,19 +161,26 @@ export default function Home() {
   useReveal();
   const { setCursorMode } = useApp();
   const orbitalRef = useRef<HTMLDivElement>(null);
+  const heroHeadingRef = useRef<HTMLHeadingElement>(null);
   const [loaded, setLoaded] = useState(false);
+
+  // Studio statement heading — shared IntersectionObserver for staggered TextMaskReveal
+  const [studioRef, studioInView] = useInView<HTMLHeadingElement>({ threshold: 0.15 });
 
   useEffect(() => {
     const t = setTimeout(() => setLoaded(true), 60);
     return () => clearTimeout(t);
   }, []);
 
-  /* Subtle parallax on orbital as user scrolls */
+  /* Parallax: orbital drifts back slower; hero heading drifts very subtly */
   useEffect(() => {
-    const el = orbitalRef.current;
-    if (!el) return;
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduced) return;
+    const orbital = orbitalRef.current;
+    const heading = heroHeadingRef.current;
     const handleScroll = () => {
-      el.style.transform = `translateY(${window.scrollY * 0.18}px)`;
+      if (orbital) orbital.style.transform = `translateY(${window.scrollY * 0.14}px)`;
+      if (heading) heading.style.transform = `translateY(${window.scrollY * -0.04}px)`;
     };
     window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
@@ -216,6 +238,7 @@ export default function Home() {
           {/* Main ORVEX display heading */}
           <div>
             <h1
+              ref={heroHeadingRef}
               className="font-700 text-[#f5f7f8] leading-[0.86] tracking-[-0.055em]"
               style={{
                 fontFamily: "'Space Grotesk', sans-serif",
@@ -224,6 +247,7 @@ export default function Home() {
                 opacity: loaded ? 1 : 0,
                 transform: loaded ? "translateY(0)" : "translateY(40px)",
                 transition: "opacity 1.1s cubic-bezier(0.16,1,0.3,1) 0.1s, transform 1.1s cubic-bezier(0.16,1,0.3,1) 0.1s",
+                willChange: "transform",
               }}
             >
               ORVEX
@@ -272,22 +296,26 @@ export default function Home() {
                 Shaping digital worlds. From vision to dimension.
               </p>
               <div className="flex items-center gap-4 flex-wrap">
-                <Link
-                  to="/work"
-                  className="btn-primary"
-                  onMouseEnter={() => setCursorMode("enter")}
-                  onMouseLeave={() => setCursorMode("default")}
-                >
-                  EXPLORE WORK <ArrowRight size={13} />
-                </Link>
-                <Link
-                  to="/contact"
-                  className="btn-secondary"
-                  onMouseEnter={() => setCursorMode("enter")}
-                  onMouseLeave={() => setCursorMode("default")}
-                >
-                  START A PROJECT
-                </Link>
+                <MagneticButton strength={0.28}>
+                  <Link
+                    to="/work"
+                    className="btn-primary"
+                    onMouseEnter={() => setCursorMode("enter")}
+                    onMouseLeave={() => setCursorMode("default")}
+                  >
+                    EXPLORE WORK <ArrowRight size={13} />
+                  </Link>
+                </MagneticButton>
+                <MagneticButton strength={0.28}>
+                  <Link
+                    to="/contact"
+                    className="btn-secondary"
+                    onMouseEnter={() => setCursorMode("enter")}
+                    onMouseLeave={() => setCursorMode("default")}
+                  >
+                    START A PROJECT
+                  </Link>
+                </MagneticButton>
               </div>
             </div>
 
@@ -318,18 +346,23 @@ export default function Home() {
           {/* Main statement — editorial large type */}
           <div className="grid grid-cols-1 md:grid-cols-[1fr_320px] gap-20 items-end mb-32">
             <h2
-              className="text-[#f5f7f8] font-700 leading-[1.0] tracking-[-0.04em] reveal"
+              ref={studioRef}
+              className="text-[#f5f7f8] font-700 leading-[1.0] tracking-[-0.04em]"
               style={{
                 fontFamily: "'Space Grotesk', sans-serif",
                 fontWeight: 700,
                 fontSize: "clamp(44px, 6vw, 92px)",
               }}
             >
-              WE TURN IDEAS<br />
-              INTO{" "}
-              <span className="text-[#bfc5cc]/45">DIMENSIONAL</span>
+              <TextMaskReveal text="WE TURN IDEAS" externalInView={studioInView} delay={0} wordDelay={0.06} />
               <br />
-              EXPERIENCES.
+              <TextMaskReveal text="INTO" externalInView={studioInView} delay={0.18} />
+              {" "}
+              <span className="text-[#bfc5cc]/45">
+                <TextMaskReveal text="DIMENSIONAL" externalInView={studioInView} delay={0.26} wordDelay={0.065} />
+              </span>
+              <br />
+              <TextMaskReveal text="EXPERIENCES." externalInView={studioInView} delay={0.38} wordDelay={0.07} />
             </h2>
 
             <div className="reveal" style={{ transitionDelay: "0.15s" }}>
@@ -415,9 +448,10 @@ export default function Home() {
                   <img
                     src={featured[0].coverImage}
                     alt={featured[0].title}
-                    className="project-card-img w-full h-full object-cover absolute inset-0"
+                    className="project-card-img img-scale w-full h-full object-cover absolute inset-0"
                     loading="eager"
                   />
+                  <div className="img-reveal-overlay" />
                   <div className="project-card-overlay" />
                   <div className="absolute inset-0 p-8 flex flex-col justify-between">
                     <div className="flex items-center justify-between">
@@ -455,9 +489,10 @@ export default function Home() {
                   <img
                     src={featured[1].coverImage}
                     alt={featured[1].title}
-                    className="project-card-img w-full h-full object-cover absolute inset-0"
+                    className="project-card-img img-scale w-full h-full object-cover absolute inset-0"
                     loading="lazy"
                   />
+                  <div className="img-reveal-overlay" style={{ animationDelay: "0.12s" }} />
                   <div className="project-card-overlay" />
                   <div className="absolute inset-0 p-6 flex flex-col justify-between">
                     <span className="badge badge-gray self-start">{featured[1].category}</span>
@@ -491,9 +526,10 @@ export default function Home() {
                 <img
                   src={featured[2].coverImage}
                   alt={featured[2].title}
-                  className="project-card-img w-full h-full object-cover absolute inset-0"
+                  className="project-card-img img-scale w-full h-full object-cover absolute inset-0"
                   loading="lazy"
                 />
+                <div className="img-reveal-overlay" style={{ animationDelay: "0.2s" }} />
                 <div className="absolute inset-0" style={{ background: "linear-gradient(to right, rgba(5,6,8,0.85) 0%, rgba(5,6,8,0.2) 50%, transparent 100%)" }} />
                 <div className="absolute inset-0 flex items-center px-10 md:px-14">
                   <div>
