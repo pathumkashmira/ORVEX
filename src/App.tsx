@@ -71,16 +71,58 @@ import AdminBookingSettings from "@/pages/admin/BookingSettings";
 
 // ── Guards ────────────────────────────────────────────────────────────────
 
-function AdminGuard({ children }: { children: ReactNode }) {
-  const { user } = useApp();
-  if (!user) return <Navigate to="/login" replace />;
-  if (user.role !== "admin") return <Navigate to="/client" replace />;
+function AdminGuard({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  const { user, loading } = useApp();
+
+  if (loading) {
+    return null;
+  }
+
+  if (!user) {
+    return (
+      <Navigate
+        to="/login"
+        replace
+      />
+    );
+  }
+
+  if (user.role !== "admin") {
+    return (
+      <Navigate
+        to="/client"
+        replace
+      />
+    );
+  }
+
   return <>{children}</>;
 }
 
-function ClientGuard({ children }: { children: ReactNode }) {
-  const { user } = useApp();
-  if (!user) return <Navigate to="/login" replace />;
+function ClientGuard({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  const { user, loading } = useApp();
+
+  if (loading) {
+    return null;
+  }
+
+  if (!user) {
+    return (
+      <Navigate
+        to="/login"
+        replace
+      />
+    );
+  }
+
   return <>{children}</>;
 }
 
