@@ -69,13 +69,27 @@ import AdminRoles from "@/pages/admin/Roles";
 import AdminCalendar from "@/pages/admin/Calendar";
 import AdminBookingSettings from "@/pages/admin/BookingSettings";
 
-// ── Guards ────────────────────────────────────────────────────────────────
+import type { AppRole } from "@/types/studio";
 
-function AdminGuard({
-  children,
-}: {
-  children: ReactNode;
-}) {
+// ─────────────────────────────────────────────────────────────
+// ROLE HELPERS
+// ─────────────────────────────────────────────────────────────
+
+const ADMIN_ROLES: AppRole[] = [
+  "SUPER_ADMIN",
+  "ADMIN",
+  "PROJECT_LEAD",
+];
+
+function isAdminRole(role: AppRole) {
+  return role !== null && ADMIN_ROLES.includes(role);
+}
+
+// ─────────────────────────────────────────────────────────────
+// ADMIN GUARD
+// ─────────────────────────────────────────────────────────────
+
+function AdminGuard({ children }: { children: ReactNode }) {
   const { user, loading } = useApp();
 
   if (loading) {
@@ -83,31 +97,25 @@ function AdminGuard({
   }
 
   if (!user) {
-    return (
-      <Navigate
-        to="/login"
-        replace
-      />
-    );
+    return <Navigate to="/login" replace />;
   }
 
-  if (user.role !== "admin") {
-    return (
-      <Navigate
-        to="/client"
-        replace
-      />
-    );
+  if (!isAdminRole(user.role)) {
+    if (user.role === "CLIENT") {
+      return <Navigate to="/client" replace />;
+    }
+
+    return <Navigate to="/studio" replace />;
   }
 
   return <>{children}</>;
 }
 
-function ClientGuard({
-  children,
-}: {
-  children: ReactNode;
-}) {
+// ─────────────────────────────────────────────────────────────
+// CLIENT GUARD
+// ─────────────────────────────────────────────────────────────
+
+function ClientGuard({ children }: { children: ReactNode }) {
   const { user, loading } = useApp();
 
   if (loading) {
@@ -115,54 +123,93 @@ function ClientGuard({
   }
 
   if (!user) {
-    return (
-      <Navigate
-        to="/login"
-        replace
-      />
-    );
+    return <Navigate to="/login" replace />;
+  }
+
+  if (user.role !== "CLIENT") {
+    return <Navigate to="/admin" replace />;
   }
 
   return <>{children}</>;
 }
 
-// ── Root layout — orbital route transitions + scroll progress ─────────────
+// ─────────────────────────────────────────────────────────────
+// STUDIO GUARD
+// ─────────────────────────────────────────────────────────────
+
+function StudioGuard({ children }: { children: ReactNode }) {
+  const { user, loading } = useApp();
+
+  if (loading) {
+    return null;
+  }
+
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (
+    user.role !== "TEAM_COLLABORATOR" &&
+    user.role !== "PROJECT_LEAD" &&
+    user.role !== "ADMIN" &&
+    user.role !== "SUPER_ADMIN"
+  ) {
+    return <Navigate to="/client" replace />;
+  }
+
+  return <>{children}</>;
+}
+
+// ─────────────────────────────────────────────────────────────
+// ROOT SHELL
+// ─────────────────────────────────────────────────────────────
 
 function AppShell() {
   const location = useLocation();
+
   const [transitionKey, setTransitionKey] = useState(0);
+
   const prevPath = useRef(location.pathname);
 
-  // Scroll-progress bar
   const [scrollPct, setScrollPct] = useState(0);
+
   useEffect(() => {
     const update = () => {
-      const max = document.documentElement.scrollHeight - window.innerHeight;
-      setScrollPct(max > 0 ? (window.scrollY / max) * 100 : 0);
+      const max =
+        document.documentElement.scrollHeight - window.innerHeight;
+
+      setScrollPct(
+        max > 0 ? (window.scrollY / max) * 100 : 0
+      );
     };
-    window.addEventListener("scroll", update, { passive: true });
-    return () => window.removeEventListener("scroll", update);
+
+    window.addEventListener("scroll", update, {
+      passive: true,
+    });
+
+    return () =>
+      window.removeEventListener("scroll", update);
   }, []);
 
-  // Fire transition on route change
   useEffect(() => {
     if (prevPath.current !== location.pathname) {
       prevPath.current = location.pathname;
+
       setTransitionKey((k) => k + 1);
-      // Scroll to top on navigation
+
       window.scrollTo(0, 0);
     }
   }, [location.pathname]);
 
   return (
     <>
-      {/* Scroll progress line */}
       <div
         className="scroll-progress"
-        style={{ transform: `scaleX(${scrollPct / 100})` }}
+        style={{
+          transform: `scaleX(${scrollPct / 100})`,
+        }}
       />
 
-      {/* Orbital page transition — remounts on each route change */}
       <OrbitalTransition key={transitionKey} />
 
       <Outlet />
@@ -170,12 +217,16 @@ function AppShell() {
   );
 }
 
-// ── Router ────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// ROUTER
+// ─────────────────────────────────────────────────────────────
 
 const router = createBrowserRouter([
   {
     element: <AppShell />,
+
     children: [
+      // PUBLIC
       { path: "/", element: <Home /> },
       { path: "/work", element: <Work /> },
       { path: "/work/:slug", element: <ProjectDetail /> },
@@ -193,49 +244,313 @@ const router = createBrowserRouter([
       { path: "/privacy", element: <Privacy /> },
       { path: "/terms", element: <Terms /> },
       { path: "/refund", element: <Refund /> },
+
+      // AUTH
       { path: "/login", element: <Login /> },
 
-      // Client portal
-      { path: "/client", element: <ClientGuard><ClientDashboard /></ClientGuard> },
-      { path: "/client/projects", element: <ClientGuard><ClientProjects /></ClientGuard> },
-      { path: "/client/orders", element: <ClientGuard><ClientOrders /></ClientGuard> },
-      { path: "/client/invoices", element: <ClientGuard><ClientInvoices /></ClientGuard> },
-      { path: "/client/payments", element: <ClientGuard><ClientPayments /></ClientGuard> },
-      { path: "/client/appointments", element: <ClientGuard><ClientAppointments /></ClientGuard> },
-      { path: "/client/messages", element: <ClientGuard><ClientMessages /></ClientGuard> },
-      { path: "/client/files", element: <ClientGuard><ClientFiles /></ClientGuard> },
-      { path: "/client/profile", element: <ClientGuard><ClientProfile /></ClientGuard> },
+      // CLIENT
+      {
+        path: "/client",
+        element: (
+          <ClientGuard>
+            <ClientDashboard />
+          </ClientGuard>
+        ),
+      },
 
-      // Admin
-      { path: "/admin", element: <AdminGuard><AdminDashboard /></AdminGuard> },
-      { path: "/admin/projects", element: <AdminGuard><AdminProjects /></AdminGuard> },
-      { path: "/admin/services", element: <AdminGuard><AdminServices /></AdminGuard> },
-      { path: "/admin/orders", element: <AdminGuard><AdminOrders /></AdminGuard> },
-      { path: "/admin/bookings", element: <AdminGuard><AdminBookings /></AdminGuard> },
-      { path: "/admin/customers", element: <AdminGuard><AdminCustomers /></AdminGuard> },
-      { path: "/admin/invoices", element: <AdminGuard><AdminInvoices /></AdminGuard> },
-      { path: "/admin/payments", element: <AdminGuard><AdminPayments /></AdminGuard> },
-      { path: "/admin/messages", element: <AdminGuard><AdminMessages /></AdminGuard> },
-      { path: "/admin/journal", element: <AdminGuard><AdminJournal /></AdminGuard> },
-      { path: "/admin/media", element: <AdminGuard><AdminMedia /></AdminGuard> },
-      { path: "/admin/testimonials", element: <AdminGuard><AdminTestimonials /></AdminGuard> },
-      { path: "/admin/settings", element: <AdminGuard><AdminSettings /></AdminGuard> },
-      { path: "/admin/seo", element: <AdminGuard><AdminSEO /></AdminGuard> },
-      { path: "/admin/analytics", element: <AdminGuard><AdminAnalytics /></AdminGuard> },
-      { path: "/admin/users", element: <AdminGuard><AdminUsers /></AdminGuard> },
-      { path: "/admin/roles", element: <AdminGuard><AdminRoles /></AdminGuard> },
-      { path: "/admin/leads", element: <AdminGuard><AdminLeads /></AdminGuard> },
-      { path: "/admin/notifications", element: <AdminGuard><AdminNotifications /></AdminGuard> },
-      { path: "/admin/audit", element: <AdminGuard><AdminAuditLog /></AdminGuard> },
-      { path: "/admin/calendar", element: <AdminGuard><AdminCalendar /></AdminGuard> },
-      { path: "/admin/booking-settings", element: <AdminGuard><AdminBookingSettings /></AdminGuard> },
+      {
+        path: "/client/projects",
+        element: (
+          <ClientGuard>
+            <ClientProjects />
+          </ClientGuard>
+        ),
+      },
 
-      { path: "*", element: <NotFound /> },
+      {
+        path: "/client/orders",
+        element: (
+          <ClientGuard>
+            <ClientOrders />
+          </ClientGuard>
+        ),
+      },
+
+      {
+        path: "/client/invoices",
+        element: (
+          <ClientGuard>
+            <ClientInvoices />
+          </ClientGuard>
+        ),
+      },
+
+      {
+        path: "/client/payments",
+        element: (
+          <ClientGuard>
+            <ClientPayments />
+          </ClientGuard>
+        ),
+      },
+
+      {
+        path: "/client/appointments",
+        element: (
+          <ClientGuard>
+            <ClientAppointments />
+          </ClientGuard>
+        ),
+      },
+
+      {
+        path: "/client/messages",
+        element: (
+          <ClientGuard>
+            <ClientMessages />
+          </ClientGuard>
+        ),
+      },
+
+      {
+        path: "/client/files",
+        element: (
+          <ClientGuard>
+            <ClientFiles />
+          </ClientGuard>
+        ),
+      },
+
+      {
+        path: "/client/profile",
+        element: (
+          <ClientGuard>
+            <ClientProfile />
+          </ClientGuard>
+        ),
+      },
+
+      // INTERNAL STUDIO
+      {
+        path: "/studio-os",
+        element: (
+          <StudioGuard>
+            <AdminDashboard />
+          </StudioGuard>
+        ),
+      },
+
+      // ADMIN
+      {
+        path: "/admin",
+        element: (
+          <AdminGuard>
+            <AdminDashboard />
+          </AdminGuard>
+        ),
+      },
+
+      {
+        path: "/admin/projects",
+        element: (
+          <AdminGuard>
+            <AdminProjects />
+          </AdminGuard>
+        ),
+      },
+
+      {
+        path: "/admin/services",
+        element: (
+          <AdminGuard>
+            <AdminServices />
+          </AdminGuard>
+        ),
+      },
+
+      {
+        path: "/admin/orders",
+        element: (
+          <AdminGuard>
+            <AdminOrders />
+          </AdminGuard>
+        ),
+      },
+
+      {
+        path: "/admin/bookings",
+        element: (
+          <AdminGuard>
+            <AdminBookings />
+          </AdminGuard>
+        ),
+      },
+
+      {
+        path: "/admin/customers",
+        element: (
+          <AdminGuard>
+            <AdminCustomers />
+          </AdminGuard>
+        ),
+      },
+
+      {
+        path: "/admin/invoices",
+        element: (
+          <AdminGuard>
+            <AdminInvoices />
+          </AdminGuard>
+        ),
+      },
+
+      {
+        path: "/admin/payments",
+        element: (
+          <AdminGuard>
+            <AdminPayments />
+          </AdminGuard>
+        ),
+      },
+
+      {
+        path: "/admin/messages",
+        element: (
+          <AdminGuard>
+            <AdminMessages />
+          </AdminGuard>
+        ),
+      },
+
+      {
+        path: "/admin/journal",
+        element: (
+          <AdminGuard>
+            <AdminJournal />
+          </AdminGuard>
+        ),
+      },
+
+      {
+        path: "/admin/media",
+        element: (
+          <AdminGuard>
+            <AdminMedia />
+          </AdminGuard>
+        ),
+      },
+
+      {
+        path: "/admin/testimonials",
+        element: (
+          <AdminGuard>
+            <AdminTestimonials />
+          </AdminGuard>
+        ),
+      },
+
+      {
+        path: "/admin/settings",
+        element: (
+          <AdminGuard>
+            <AdminSettings />
+          </AdminGuard>
+        ),
+      },
+
+      {
+        path: "/admin/seo",
+        element: (
+          <AdminGuard>
+            <AdminSEO />
+          </AdminGuard>
+        ),
+      },
+
+      {
+        path: "/admin/analytics",
+        element: (
+          <AdminGuard>
+            <AdminAnalytics />
+          </AdminGuard>
+        ),
+      },
+
+      {
+        path: "/admin/users",
+        element: (
+          <AdminGuard>
+            <AdminUsers />
+          </AdminGuard>
+        ),
+      },
+
+      {
+        path: "/admin/roles",
+        element: (
+          <AdminGuard>
+            <AdminRoles />
+          </AdminGuard>
+        ),
+      },
+
+      {
+        path: "/admin/leads",
+        element: (
+          <AdminGuard>
+            <AdminLeads />
+          </AdminGuard>
+        ),
+      },
+
+      {
+        path: "/admin/notifications",
+        element: (
+          <AdminGuard>
+            <AdminNotifications />
+          </AdminGuard>
+        ),
+      },
+
+      {
+        path: "/admin/audit",
+        element: (
+          <AdminGuard>
+            <AdminAuditLog />
+          </AdminGuard>
+        ),
+      },
+
+      {
+        path: "/admin/calendar",
+        element: (
+          <AdminGuard>
+            <AdminCalendar />
+          </AdminGuard>
+        ),
+      },
+
+      {
+        path: "/admin/booking-settings",
+        element: (
+          <AdminGuard>
+            <AdminBookingSettings />
+          </AdminGuard>
+        ),
+      },
+
+      // FALLBACK
+      {
+        path: "*",
+        element: <NotFound />,
+      },
     ],
   },
 ]);
 
-// ── Root ──────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// ROOT
+// ─────────────────────────────────────────────────────────────
 
 export default function App() {
   return (
