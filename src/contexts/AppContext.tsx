@@ -7,69 +7,167 @@ import {
 } from "react";
 
 import { supabase } from "@/lib/supabase";
+import type { AppRole } from "@/types/studio";
 
-export type UserRole =
-  | "SUPER_ADMIN"
-  | "ADMIN"
-  | "PROJECT_LEAD"
-  | "TEAM_MEMBER"
-  | "CLIENT"
-  | null;
-
-interface AppUser {
+export interface AppUser {
   id: string;
   name: string;
   email: string;
-  role: UserRole;
+  role: AppRole;
   company?: string;
 }
 
 interface AppContextType {
   user: AppUser | null;
-  login: (email: string, password: string) => Promise<boolean>;
+
+  login: (
+    email: string,
+    password: string
+  ) => Promise<AppUser | null>;
+
   logout: () => Promise<void>;
+
   cursorMode: "default" | "view" | "enter";
-  setCursorMode: (mode: "default" | "view" | "enter") => void;
+
+  setCursorMode: (
+    mode: "default" | "view" | "enter"
+  ) => void;
+
   loading: boolean;
 }
 
-const AppContext = createContext<AppContextType | null>(null);
+const AppContext =
+  createContext<AppContextType | null>(null);
 
-export function AppProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AppUser | null>(null);
-  const [loading, setLoading] = useState(true);
+export function AppProvider({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  const [user, setUser] =
+    useState<AppUser | null>(null);
 
-  const [cursorMode, setCursorMode] = useState<
-    "default" | "view" | "enter"
-  >("default");
+  const [loading, setLoading] =
+    useState(true);
 
-  // ------------------------------------------------------------
-  // LOAD CURRENT SUPABASE SESSION
-  // ------------------------------------------------------------
+  const [cursorMode, setCursorMode] =
+    useState<
+      "default" | "view" | "enter"
+    >("default");
+
+  // ─────────────────────────────────────────────
+  // LOAD USER PROFILE
+  // ─────────────────────────────────────────────
+
+  const loadUserProfile = async (
+    userId: string,
+    email: string
+  ): Promise<AppUser | null> => {
+    if (!supabase) return null;
+
+    try {
+      const {
+        data: profile,
+        error,
+      } = await supabase
+        .from("profiles")
+        .select(
+          "id, full_name, role"
+        )
+        .eq("id", userId)
+        .maybeSingle();
+
+      if (error) {
+        console.error(
+          "Profile load error:",
+          error
+        );
+
+        return null;
+      }
+
+      if (!profile) {
+        console.warn(
+          "Authenticated user has no profile:",
+          userId
+        );
+
+        return null;
+      }
+
+      const appUser: AppUser = {
+        id: profile.id,
+
+        name:
+          profile.full_name ||
+          email.split("@")[0],
+
+        email,
+
+        role: profile.role as AppRole,
+      };
+
+      setUser(appUser);
+
+      return appUser;
+    } catch (error) {
+      console.error(
+        "Unexpected profile error:",
+        error
+      );
+
+      return null;
+    }
+  };
+
+  // ─────────────────────────────────────────────
+  // RESTORE SESSION
+  // ─────────────────────────────────────────────
 
   useEffect(() => {
     let mounted = true;
 
-    const loadSession = async () => {
+    const restoreSession = async () => {
       if (!supabase) {
-        setLoading(false);
+        if (mounted) {
+          setLoading(false);
+        }
+
         return;
       }
 
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
 
-      if (!mounted) return;
+        if (!mounted) return;
 
-      if (session?.user) {
-        await loadUserProfile(session.user.id, session.user.email ?? "");
+        if (session?.user) {
+          await loadUserProfile(
+            session.user.id,
+            session.user.email ?? ""
+          );
+        } else {
+          setUser(null);
+        }
+      } catch (error) {
+        console.error(
+          "Session restore error:",
+          error
+        );
+
+        if (mounted) {
+          setUser(null);
+        }
+      } finally {
+        if (mounted) {
+          setLoading(false);
+        }
       }
-
-      setLoading(false);
     };
 
-    loadSession();
+    restoreSession();
 
     if (!supabase) {
       return () => {
@@ -79,17 +177,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (!mounted) return;
+    } = supabase.auth.onAuthStateChange(
+      async (_event, session) => {
+        if (!mounted) return;
 
-      if (session?.user) {
-        await loadUserProfile(session.user.id, session.user.email ?? "");
-      } else {
-        setUser(null);
+        if (session?.user) {
+          await loadUserProfile(
+            session.user.id,
+            session.user.email ?? ""
+          );
+        } else {
+          setUser(null);
+        }
+
+        setLoading(false);
       }
-
-      setLoading(false);
-    });
+    );
 
     return () => {
       mounted = false;
@@ -97,111 +200,71 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // ------------------------------------------------------------
-  // LOAD USER PROFILE
-  // ------------------------------------------------------------
-
-  const loadUserProfile = async (userId: string, email: string) => {
-    if (!supabase) return;
-
-    try {
-      const { data: profile, error } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", userId)
-        .maybeSingle();
-
-      if (error) {
-        console.error("Profile load error:", error);
-
-        // Fallback user.
-        setUser({
-          id: userId,
-          name: email.split("@")[0],
-          email,
-          role: "CLIENT",
-        });
-
-        return;
-      }
-
-      if (profile) {
-        setUser({
-          id: userId,
-          name:
-            profile.full_name ||
-            profile.name ||
-            email.split("@")[0],
-          email,
-          role: profile.role ?? "CLIENT",
-          company: profile.company ?? undefined,
-        });
-
-        return;
-      }
-
-      // If authentication exists but profile does not exist yet.
-      setUser({
-        id: userId,
-        name: email.split("@")[0],
-        email,
-        role: "CLIENT",
-      });
-    } catch (error) {
-      console.error("Unexpected profile error:", error);
-
-      setUser({
-        id: userId,
-        name: email.split("@")[0],
-        email,
-        role: "CLIENT",
-      });
-    }
-  };
-
-  // ------------------------------------------------------------
+  // ─────────────────────────────────────────────
   // LOGIN
-  // ------------------------------------------------------------
+  // ─────────────────────────────────────────────
 
   const login = async (
     email: string,
     password: string
-  ): Promise<boolean> => {
+  ): Promise<AppUser | null> => {
     if (!supabase) {
-      console.error("Supabase is not configured.");
-      return false;
+      console.error(
+        "Supabase is not configured."
+      );
+
+      return null;
     }
 
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      });
+      const {
+        data,
+        error,
+      } =
+        await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        });
 
       if (error) {
-        console.error("Supabase login error:", error);
-        return false;
+        console.error(
+          "Supabase login error:",
+          error
+        );
+
+        return null;
       }
 
       if (!data.user) {
-        return false;
+        return null;
       }
 
-      await loadUserProfile(
-        data.user.id,
-        data.user.email ?? email
+      const profile =
+        await loadUserProfile(
+          data.user.id,
+          data.user.email ?? email
+        );
+
+      if (!profile) {
+        await supabase.auth.signOut();
+
+        return null;
+      }
+
+      return profile;
+    } catch (error) {
+      console.error(
+        "Login error:",
+        error
       );
 
-      return true;
-    } catch (error) {
-      console.error("Login error:", error);
-      return false;
+      return null;
     }
   };
 
-  // ------------------------------------------------------------
+  // ─────────────────────────────────────────────
   // LOGOUT
-  // ------------------------------------------------------------
+  // ─────────────────────────────────────────────
 
   const logout = async () => {
     if (supabase) {
@@ -228,11 +291,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 }
 
 export function useApp() {
-  const ctx = useContext(AppContext);
+  const context =
+    useContext(AppContext);
 
-  if (!ctx) {
-    throw new Error("useApp must be used within AppProvider");
+  if (!context) {
+    throw new Error(
+      "useApp must be used within AppProvider"
+    );
   }
 
-  return ctx;
+  return context;
 }
