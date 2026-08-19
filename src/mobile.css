@@ -1,0 +1,1182 @@
+/* ============================================================
+   ORVEX — MOBILE ART DIRECTION
+   Breakpoints:
+   390px  — compact mobile
+   430px  — large mobile
+   768px  — tablet
+   1024px — desktop remains original
+   ============================================================ */
+
+
+/* ============================================================
+   GLOBAL MOBILE FOUNDATION
+   ============================================================ */
+
+@media (max-width: 1023px) {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    font-size: 15px;
+    overflow-x: hidden;
+  }
+
+  /*
+   * The custom cursor is a desktop interaction.
+   * Touch devices should use the native pointer behaviour.
+   */
+  .noise * {
+    cursor: auto !important;
+  }
+
+  .cursor-dot,
+  .cursor-ring,
+  .cursor-label {
+    display: none !important;
+  }
+
+  /*
+   * Touch targets.
+   */
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  button,
+  .btn-primary,
+  .btn-secondary,
+  .btn-ghost {
+    touch-action: manipulation;
+  }
+
+  .btn-primary,
+  .btn-secondary {
+    min-height: 48px;
+  }
+
+  .orvex-input,
+  .orvex-select,
+  .admin-input,
+  .admin-select,
+  .admin-textarea {
+    font-size: 16px !important;
+    min-height: 48px;
+  }
+
+  img {
+    max-width: 100%;
+  }
+}
+
+
+/* ============================================================
+   TABLET / COMPACT DESKTOP NAV
+   768–1023
+   ============================================================ */
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  nav > div {
+    height: 68px !important;
+    padding-left: 28px !important;
+    padding-right: 28px !important;
+  }
+
+  /*
+   * At tablet widths the full desktop navigation becomes too
+   * dense. Use the existing mobile menu instead.
+   */
+  nav .md\:flex {
+    display: none !important;
+  }
+
+  nav .md\:hidden {
+    display: flex !important;
+  }
+
+  .mobile-nav {
+    display: flex;
+  }
+
+  /*
+   * Hero.
+   */
+  main > section:has(.orbital-ring) {
+    min-height: 100svh !important;
+  }
+
+  main > section:has(.orbital-ring) h1 {
+    font-size: clamp(96px, 16vw, 150px) !important;
+  }
+
+  main > section:has(.orbital-ring) > div[style*="left: 42%"] {
+    left: 48% !important;
+    transform: scale(0.78) !important;
+  }
+
+  /*
+   * Portfolio remains editorial at tablet.
+   */
+  .work-item {
+    min-height: 360px;
+  }
+
+  /*
+   * Admin content.
+   */
+  .admin-page {
+    padding: 24px !important;
+  }
+
+  .admin-table-wrap {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .admin-table {
+    min-width: 760px;
+  }
+}
+
+
+/* ============================================================
+   MOBILE NAV
+   <= 767
+   ============================================================ */
+
+@media (max-width: 767px) {
+
+  /*
+   * Navigation bar.
+   */
+  nav {
+    height: 64px !important;
+  }
+
+  nav > div {
+    height: 64px !important;
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+
+  nav .md\:flex {
+    display: none !important;
+  }
+
+  nav .md\:hidden {
+    display: flex !important;
+  }
+
+  nav .md\:hidden button,
+  nav button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  /*
+   * Full-screen mobile navigation.
+   */
+  .mobile-nav {
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 790 !important;
+
+    display: flex !important;
+    flex-direction: column !important;
+
+    width: 100vw !important;
+    height: 100svh !important;
+
+    padding:
+      calc(76px + env(safe-area-inset-top))
+      20px
+      calc(24px + env(safe-area-inset-bottom))
+      20px !important;
+
+    background:
+      radial-gradient(
+        circle at 80% 15%,
+        rgba(255, 90, 0, 0.07),
+        transparent 30%
+      ),
+      #050608 !important;
+
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
+
+    transform: translateX(100%);
+    visibility: hidden;
+    opacity: 0;
+
+    transition:
+      transform 0.45s cubic-bezier(0.16, 1, 0.3, 1),
+      opacity 0.3s ease,
+      visibility 0.45s;
+  }
+
+  .mobile-nav.open {
+    transform: translateX(0);
+    visibility: visible;
+    opacity: 1;
+  }
+
+  /*
+   * Prevent background scrolling while menu is open.
+   */
+  body:has(.mobile-nav.open) {
+    overflow: hidden;
+  }
+
+  .mobile-nav > div:first-child {
+    height: 64px !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+
+  .mobile-nav > div:nth-child(2) {
+    margin-top: 18px !important;
+  }
+
+  .mobile-nav > div:nth-child(2) a {
+    display: block;
+  }
+
+  .mobile-nav > div:nth-child(2) a > div {
+    min-height: 56px;
+    padding-top: 14px !important;
+    padding-bottom: 14px !important;
+  }
+
+  .mobile-nav > div:nth-child(2) span:first-child {
+    font-size: 30px !important;
+  }
+
+  .mobile-nav .btn-primary,
+  .mobile-nav .btn-secondary {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /*
+   * Hide unnecessary mobile menu animation if reduced motion
+   * is requested.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    .mobile-nav {
+      transition: none !important;
+    }
+  }
+}
+
+
+/* ============================================================
+   HOME — MOBILE HERO
+   ============================================================ */
+
+@media (max-width: 767px) {
+
+  /*
+   * Hero becomes a vertical composition rather than a
+   * compressed desktop split.
+   */
+  main > section:has(.orbital-ring) {
+    min-height: 100svh !important;
+    height: auto !important;
+    padding-top: 0 !important;
+  }
+
+  /*
+   * Orbital artwork moves behind the type.
+   */
+  main > section:has(.orbital-ring) > div[style*="left: 42%"] {
+    left: 48% !important;
+    top: 10% !important;
+    right: -15% !important;
+    height: 54% !important;
+
+    transform: scale(0.62) !important;
+    opacity: 0.62;
+
+    pointer-events: none !important;
+    will-change: auto !important;
+  }
+
+  /*
+   * Reduce orbital complexity.
+   */
+  main > section:has(.orbital-ring) .orbital-ring-2,
+  main > section:has(.orbital-ring) .orbital-ring-3 {
+    display: none !important;
+  }
+
+  main > section:has(.orbital-ring) .orbital-ring-1 {
+    width: 300px !important;
+    height: 300px !important;
+    margin-left: -150px !important;
+    margin-top: -150px !important;
+    animation-duration: 18s !important;
+    opacity: 0.55;
+  }
+
+  /*
+   * Hide large secondary orbital bodies on mobile.
+   */
+  main > section:has(.orbital-ring) [style*="width: 480px"],
+  main > section:has(.orbital-ring) [style*="width: 600px"] {
+    display: none !important;
+  }
+
+  /*
+   * Hide excessive particle field.
+   */
+  main > section:has(.orbital-ring) [style*="particle-drift"] {
+    display: none !important;
+  }
+
+  /*
+   * Stop the desktop scan line.
+   */
+  main > section:has(.orbital-ring) > div[style*="scan-line"] {
+    display: none !important;
+  }
+
+  /*
+   * Remove desktop parallax transforms.
+   */
+  main > section:has(.orbital-ring) > div[style*="left: 42%"],
+  main > section:has(.orbital-ring) h1 {
+    will-change: auto !important;
+  }
+
+  /*
+   * Hero content.
+   */
+  main > section:has(.orbital-ring) > .relative.z-10 {
+    min-height: 100svh !important;
+
+    padding:
+      calc(92px + env(safe-area-inset-top))
+      16px
+      calc(28px + env(safe-area-inset-bottom))
+      16px !important;
+  }
+
+  /*
+   * Hero category.
+   */
+  main > section:has(.orbital-ring) .label-orange {
+    font-size: 9px !important;
+    letter-spacing: 0.14em !important;
+  }
+
+  /*
+   * ORVEX wordmark.
+   */
+  main > section:has(.orbital-ring) h1 {
+    font-size: clamp(64px, 21vw, 92px) !important;
+    line-height: 0.88 !important;
+    letter-spacing: -0.065em !important;
+
+    /*
+     * Disable desktop scroll-parallax transform.
+     */
+    transform: none !important;
+  }
+
+  /*
+   * Tagline.
+   */
+  main > section:has(.orbital-ring) h1 + div {
+    margin-top: 18px !important;
+    gap: 5px 10px !important;
+  }
+
+  main > section:has(.orbital-ring) h1 + div span {
+    font-size: clamp(17px, 5vw, 22px) !important;
+  }
+
+  /*
+   * Hero description.
+   */
+  main > section:has(.orbital-ring) p.text-\[\#bfc5cc\] {
+    max-width: 280px !important;
+    font-size: 14px !important;
+  }
+
+  /*
+   * CTA group becomes a clean vertical action stack.
+   */
+  main > section:has(.orbital-ring) .btn-primary,
+  main > section:has(.orbital-ring) .btn-secondary {
+    min-height: 50px;
+    padding-left: 18px !important;
+    padding-right: 18px !important;
+  }
+
+  main > section:has(.orbital-ring) .flex.items-center.gap-4 {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch !important;
+  }
+
+  main > section:has(.orbital-ring) .flex.items-center.gap-4 > * {
+    width: 100%;
+  }
+
+  /*
+   * Desktop scroll marker is already hidden by JSX,
+   * keep it hidden.
+   */
+  main > section:has(.orbital-ring) [style*="writing-mode"] {
+    display: none !important;
+  }
+}
+
+
+/* ============================================================
+   390px — COMPACT MOBILE
+   ============================================================ */
+
+@media (max-width: 400px) {
+
+  main > section:has(.orbital-ring) > .relative.z-10 {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+
+  main > section:has(.orbital-ring) h1 {
+    font-size: 64px !important;
+  }
+
+  .mobile-nav {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+
+  .mobile-nav > div:nth-child(2) span:first-child {
+    font-size: 27px !important;
+  }
+
+  .btn-primary,
+  .btn-secondary {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+
+/* ============================================================
+   430px — LARGE MOBILE
+   ============================================================ */
+
+@media (min-width: 401px) and (max-width: 767px) {
+
+  main > section:has(.orbital-ring) > .relative.z-10 {
+    padding-left: 20px !important;
+    padding-right: 20px !important;
+  }
+
+  main > section:has(.orbital-ring) h1 {
+    font-size: clamp(72px, 20vw, 96px) !important;
+  }
+
+  .mobile-nav {
+    padding-left: 20px !important;
+    padding-right: 20px !important;
+  }
+
+  /*
+   * At 430px there is enough width for side-by-side CTAs.
+   */
+  main > section:has(.orbital-ring) .flex.items-center.gap-4 {
+    flex-direction: row;
+    align-items: stretch !important;
+  }
+
+  main > section:has(.orbital-ring) .flex.items-center.gap-4 > * {
+    width: auto;
+    flex: 1;
+  }
+}
+
+
+/* ============================================================
+   HOME TICKER
+   ============================================================ */
+
+@media (max-width: 767px) {
+  .ticker-track {
+    animation-duration: 34s !important;
+  }
+
+  .overflow-hidden.border-t.border-b.py-4 {
+    padding-top: 11px !important;
+    padding-bottom: 11px !important;
+  }
+}
+
+
+/* ============================================================
+   PORTFOLIO / WORK — MOBILE ART DIRECTION
+   ============================================================ */
+
+@media (max-width: 767px) {
+
+  /*
+   * Work page header.
+   */
+  main .work-item {
+    height: min(110vw, 430px) !important;
+    min-height: 0 !important;
+  }
+
+  /*
+   * Existing editorial asymmetric wrappers collapse into a
+   * single-column rhythm on mobile.
+   *
+   * :has() lets us target the existing structure without
+   * rewriting Work.tsx.
+   */
+  main div:has(> .work-item) {
+    width: 100% !important;
+    flex: 1 1 100% !important;
+    margin-top: 0 !important;
+  }
+
+  /*
+   * Compact portfolio gutters.
+   */
+  main .work-item {
+    border-radius: 0 !important;
+  }
+
+  /*
+   * Metadata must remain visible on touch.
+   */
+  .work-item-meta {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  .work-item-img {
+    transform: none !important;
+  }
+
+  .work-item-overlay {
+    opacity: 0.82 !important;
+  }
+
+  .work-item-title {
+    font-size: clamp(24px, 7vw, 34px) !important;
+    line-height: 0.98 !important;
+  }
+
+  .work-item-cat {
+    font-size: 9px !important;
+    letter-spacing: 0.12em !important;
+  }
+
+  .work-item-view {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  .work-item-badge {
+    font-size: 8px !important;
+    top: 14px !important;
+    left: 14px !important;
+  }
+
+  /*
+   * Hide wide-card descriptive copy on compact mobile.
+   */
+  .work-item-meta > p {
+    display: none !important;
+  }
+
+  /*
+   * Work header.
+   */
+  main header.px-8.md\:px-16 {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+    padding-top: 32px !important;
+    padding-bottom: 28px !important;
+  }
+
+  main header.px-8.md\:px-16 h1 {
+    font-size: clamp(68px, 21vw, 96px) !important;
+  }
+
+  /*
+   * Category filter becomes horizontally scrollable.
+   */
+  .work-filter-btn {
+    flex-shrink: 0;
+    min-height: 44px;
+    padding: 8px 0 !important;
+  }
+
+  /*
+   * Find the category strip by its button children.
+   */
+  main header .flex.flex-wrap {
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 4px;
+  }
+
+  main header .flex.flex-wrap::-webkit-scrollbar {
+    display: none;
+  }
+
+  /*
+   * Work grid spacing.
+   */
+  main .px-4.md\:px-6.py-4 {
+    padding: 10px !important;
+    gap: 10px !important;
+  }
+
+  /*
+   * Footer action.
+   */
+  main .border-t.border-white\/5.px-8.md\:px-16.py-12 {
+    padding: 28px 16px !important;
+    gap: 20px;
+    flex-direction: column;
+    align-items: stretch !important;
+  }
+
+  main .border-t.border-white\/5.px-8.md\:px-16.py-12 .btn-primary {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+
+/* ============================================================
+   TOUCH PROJECT CARDS
+   ============================================================ */
+
+@media (pointer: coarse) {
+
+  .project-card:hover .project-card-img,
+  .work-item:hover .work-item-img {
+    transform: none !important;
+  }
+
+  .project-card .project-meta,
+  .work-item .work-item-meta {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  .project-card-overlay {
+    opacity: 0.85 !important;
+  }
+}
+
+
+/* ============================================================
+   PROJECT DETAIL — MOBILE
+   ============================================================ */
+
+@media (max-width: 767px) {
+
+  /*
+   * Project hero.
+   */
+  main section:has(.project-gallery-img) {
+    overflow: hidden;
+  }
+
+  /*
+   * Hero image parallax is unnecessary on mobile.
+   */
+  main section[style*="100svh"] img {
+    transform: scale(1.04) !important;
+    transition: none !important;
+  }
+
+  /*
+   * Project title.
+   */
+  main section[style*="100svh"] h1 {
+    font-size: clamp(42px, 12vw, 68px) !important;
+    line-height: 0.92 !important;
+    margin-bottom: 14px !important;
+  }
+
+  /*
+   * Project hero content.
+   */
+  main section[style*="100svh"] > div.absolute.bottom-0 {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+    padding-bottom: 28px !important;
+  }
+
+  /*
+   * Meta information becomes a compact grid.
+   */
+  main section[style*="100svh"] .flex.flex-wrap.gap-8 {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px !important;
+    margin-top: 22px !important;
+    padding-top: 18px !important;
+  }
+
+  /*
+   * Statement.
+   */
+  main section.px-8.md\:px-16.py-24 {
+    padding: 56px 16px !important;
+  }
+
+  /*
+   * Remove vertical labels that consume width.
+   */
+  main section.px-8.md\:px-16.py-24 [style*="writingMode"],
+  main section [style*="writing-mode"] {
+    writing-mode: initial !important;
+    transform: none !important;
+  }
+
+  /*
+   * Gallery.
+   */
+  main .project-gallery-img {
+    transform: none !important;
+    transition: none !important;
+  }
+
+  main div[style*="aspectRatio: \"21/9\""],
+  main div[style*="aspect-ratio: 21/9"] {
+    aspect-ratio: 4 / 3 !important;
+  }
+
+  /*
+   * Gallery row becomes a vertical stack.
+   */
+  main div:has(> .project-gallery-img) {
+    flex-direction: column !important;
+  }
+
+  main div:has(> .project-gallery-img) > div[style*="flex: 1"] {
+    width: 100% !important;
+    flex: 1 1 auto !important;
+    aspect-ratio: 4 / 3 !important;
+  }
+
+  /*
+   * Challenge / concept.
+   */
+  main section.px-8.md\:px-16.py-20 {
+    padding: 52px 16px !important;
+    gap: 40px !important;
+  }
+
+  /*
+   * Technical detail grid.
+   */
+  main section.grid.grid-cols-2.md\:grid-cols-4 {
+    grid-template-columns: 1fr 1fr !important;
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+    gap: 28px 20px !important;
+  }
+}
+
+
+/* ============================================================
+   BOOKING — MOBILE
+   ============================================================ */
+
+@media (max-width: 767px) {
+
+  /*
+   * Booking content container.
+   */
+  main div[style*="max-width: 720px"] {
+    max-width: none !important;
+    width: 100% !important;
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+
+  /*
+   * Booking page top spacing.
+   */
+  main div[style*="max-width: 720px"] h1 {
+    font-size: clamp(30px, 8vw, 42px) !important;
+  }
+
+  /*
+   * Step indicator becomes horizontally scrollable.
+   */
+  main div:has(> div > div[style*="width: 28px"]) {
+    overflow-x: auto !important;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 4px;
+  }
+
+  main div:has(> div > div[style*="width: 28px"])::-webkit-scrollbar {
+    display: none;
+  }
+
+  /*
+   * Calendar remains seven columns but becomes denser.
+   */
+  main div[style*="grid-template-columns: repeat(7,1fr)"] {
+    gap: 3px !important;
+  }
+
+  main div[style*="grid-template-columns: repeat(7,1fr)"] button {
+    min-width: 0 !important;
+    min-height: 42px !important;
+  }
+
+  /*
+   * Booking cards and buttons.
+   */
+  main:has(div[style*="max-width: 720px"]) button {
+    touch-action: manipulation;
+  }
+
+  /*
+   * Details forms.
+   */
+  main:has(div[style*="max-width: 720px"]) input,
+  main:has(div[style*="max-width: 720px"]) textarea,
+  main:has(div[style*="max-width: 720px"]) select {
+    font-size: 16px !important;
+    min-height: 50px;
+  }
+
+  main:has(div[style*="max-width: 720px"]) textarea {
+    min-height: 120px;
+  }
+}
+
+
+/* ============================================================
+   CHECKOUT — MOBILE
+   ============================================================ */
+
+@media (max-width: 767px) {
+
+  /*
+   * Checkout main content should become one focused column.
+   */
+  main:has(div[style*="position: sticky"]) [style*="grid-template-columns"] {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  /*
+   * Order summary is no longer sticky.
+   */
+  main:has(div[style*="position: sticky"]) [style*="position: sticky"] {
+    position: static !important;
+    top: auto !important;
+    width: 100% !important;
+  }
+
+  /*
+   * Checkout progress.
+   */
+  main:has(div[style*="position: sticky"]) {
+    overflow-x: hidden;
+  }
+
+  /*
+   * Progress labels remain readable.
+   */
+  main:has(div[style*="position: sticky"]) [style*="min-width: max-content"] {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+
+  /*
+   * Upload area.
+   */
+  main:has(div[style*="position: sticky"]) [style*="border: 1px dashed"] {
+    min-height: 150px;
+    padding: 28px 16px !important;
+  }
+
+  /*
+   * Payment option cards.
+   */
+  main:has(div[style*="position: sticky"]) button {
+    min-height: 48px;
+    touch-action: manipulation;
+  }
+
+  /*
+   * Checkout form controls.
+   */
+  main:has(div[style*="position: sticky"]) input,
+  main:has(div[style*="position: sticky"]) textarea,
+  main:has(div[style*="position: sticky"]) select {
+    font-size: 16px !important;
+    min-height: 50px;
+  }
+}
+
+
+/* ============================================================
+   GENERIC PUBLIC FORMS
+   ============================================================ */
+
+@media (max-width: 767px) {
+
+  .orvex-input,
+  .orvex-select {
+    min-height: 50px !important;
+    padding: 14px 15px !important;
+    border-radius: 0;
+  }
+
+  textarea.orvex-input,
+  textarea.orvex-select {
+    min-height: 130px !important;
+  }
+
+  /*
+   * Form grids collapse to one column.
+   */
+  .grid.grid-cols-2,
+  .grid.md\:grid-cols-2 {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  /*
+   * Generic action rows.
+   */
+  form .flex.items-center.gap-4,
+  form .flex.items-center.justify-between {
+    flex-wrap: wrap;
+  }
+
+  form .btn-primary,
+  form .btn-secondary {
+    min-height: 50px;
+  }
+}
+
+
+/* ============================================================
+   ADMIN — MOBILE SHELL
+   ============================================================ */
+
+@media (max-width: 767px) {
+
+  /*
+   * Admin sidebar stays off-canvas.
+   */
+  .admin-page {
+    padding: 18px 14px !important;
+  }
+
+  /*
+   * Admin page header.
+   */
+  .admin-page-header {
+    gap: 14px !important;
+    align-items: flex-start !important;
+    flex-direction: column !important;
+  }
+
+  .admin-page-header .admin-btn-primary {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /*
+   * Filters become stacked.
+   */
+  .admin-filter-bar {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 10px !important;
+  }
+
+  .admin-filter-bar > *,
+  .admin-filter-bar input,
+  .admin-filter-bar select {
+    width: 100% !important;
+    max-width: none !important;
+  }
+
+  /*
+   * Tables use touch horizontal scrolling instead of crushing
+   * columns into unreadable text.
+   */
+  .admin-table-wrap {
+    width: 100% !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    scrollbar-width: thin;
+  }
+
+  .admin-table {
+    min-width: 760px !important;
+  }
+
+  .admin-table th,
+  .admin-table td {
+    white-space: nowrap;
+    padding: 12px 10px !important;
+  }
+
+  /*
+   * Sticky first column gives the user context while swiping.
+   */
+  .admin-table th:first-child,
+  .admin-table td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    background: #161b22;
+  }
+
+  /*
+   * Action controls remain touch-friendly.
+   */
+  .admin-table .admin-btn {
+    min-height: 42px;
+  }
+
+  /*
+   * Admin cards.
+   */
+  .admin-card {
+    width: 100%;
+  }
+
+  /*
+   * Admin form grids.
+   */
+  .admin-form-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .admin-input,
+  .admin-select,
+  .admin-textarea {
+    width: 100% !important;
+    min-height: 50px !important;
+    font-size: 16px !important;
+  }
+
+  /*
+   * Admin slide-over should become full-screen on phones.
+   */
+  [role="dialog"] {
+    max-width: 100vw !important;
+  }
+}
+
+
+/* ============================================================
+   ADMIN — 390px COMPACT
+   ============================================================ */
+
+@media (max-width: 400px) {
+
+  .admin-page {
+    padding: 14px 12px !important;
+  }
+
+  .admin-heading {
+    font-size: 26px !important;
+  }
+
+  .admin-btn {
+    min-height: 44px;
+  }
+
+  .admin-table {
+    min-width: 720px !important;
+  }
+}
+
+
+/* ============================================================
+   ADMIN — 430px
+   ============================================================ */
+
+@media (min-width: 401px) and (max-width: 767px) {
+
+  .admin-page {
+    padding: 20px 16px !important;
+  }
+
+  .admin-heading {
+    font-size: 30px !important;
+  }
+}
+
+
+/* ============================================================
+   ACCESSIBILITY / PERFORMANCE
+   ============================================================ */
+
+@media (max-width: 767px) {
+
+  /*
+   * Reduce expensive visual effects on touch devices.
+   */
+  .orbital-ring-2,
+  .orbital-ring-3,
+  .cursor-dot,
+  .cursor-ring,
+  .cursor-label {
+    display: none !important;
+  }
+
+  /*
+   * Avoid hover-only visual transitions.
+   */
+  .project-card-img,
+  .work-item-img,
+  .project-gallery-img {
+    transition: none !important;
+  }
+}
+
+
+/* ============================================================
+   REDUCED MOTION — ALL VIEWPORTS
+   ============================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
+  }
+
+  .orbital-ring,
+  .ticker-track {
+    animation: none !important;
+  }
+}
