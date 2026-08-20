@@ -45,6 +45,13 @@ export async function getTeamMember(userId: string) {
   return data as TeamMember | null;
 }
 
+export async function getTeamMemberById(id: string) {
+  const db = client();
+  const { data, error } = await db.from("team_members").select("*").eq("id", id).maybeSingle();
+  if (error) throw error;
+  return data as TeamMember | null;
+}
+
 export async function getAvailability(userId: string) {
   const db = client();
   const { data, error } = await db.from("availability").select("*").eq("user_id", userId).order("day_of_week", { ascending: true });
