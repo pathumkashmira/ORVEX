@@ -1,10 +1,54 @@
-import { useEffect, useMemo, useState } from "react";
-import Layout from "@/components/Layout";
-import { supabase } from "@/lib/supabase";
-import { updateTeamMember } from "@/lib/studio";
-import type { TeamMember, TeamStatus } from "@/types/studio";
+import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import {
+  Search,
+  Plus,
+  Users,
+  MoreHorizontal,
+  BriefcaseBusiness,
+} from "lucide-react";
+import type {
+  TeamMember,
+  TeamStatus,
+  AvailabilityStatus,
+} from "@/types/studio";
 
-const STATUSES: TeamStatus[] = [
+const DEMO_TEAM: TeamMember[] = [
+  {
+    id: "team-001",
+    full_name: "ORVEX Admin",
+    email: "admin@orvex.studio",
+    role: "ADMIN",
+    team_status: "CORE",
+    skills: ["Creative Direction", "Project Management"],
+    software: ["Figma", "Blender", "Adobe CC"],
+    preferred_project_types: ["Branding", "CGI", "Motion"],
+    availability_status: "AVAILABLE",
+    rating: 5,
+    completed_projects: 18,
+    active_projects: 4,
+    pending_tasks: 7,
+    workload_percentage: 72,
+  },
+  {
+    id: "team-002",
+    full_name: "3D Artist",
+    email: "artist@orvex.studio",
+    role: "TEAM_COLLABORATOR",
+    team_status: "VERIFIED",
+    skills: ["3D Modeling", "Product CGI", "Rendering"],
+    software: ["Blender", "Cinema 4D"],
+    preferred_project_types: ["Product CGI", "Animation"],
+    availability_status: "BUSY",
+    rating: 4.8,
+    completed_projects: 11,
+    active_projects: 3,
+    pending_tasks: 5,
+    workload_percentage: 84,
+  },
+];
+
+const STATUS_OPTIONS: TeamStatus[] = [
   "APPLICANT",
   "SHORTLISTED",
   "TRIAL",
@@ -15,617 +59,319 @@ const STATUSES: TeamStatus[] = [
   "ARCHIVED",
 ];
 
-type TeamRow = TeamMember & {
-  profile?: {
-    id: string;
-    full_name: string | null;
-    avatar_url: string | null;
-    role: string | null;
-    timezone: string | null;
-  } | null;
-};
+const AVAILABILITY_OPTIONS: AvailabilityStatus[] = [
+  "AVAILABLE",
+  "BUSY",
+  "UNAVAILABLE",
+];
+
+function statusClass(status: TeamStatus) {
+  if (status === "CORE" || status === "LEAD" || status === "VERIFIED") {
+    return "text-emerald-400 bg-emerald-400/10";
+  }
+
+  if (status === "TRIAL" || status === "SHORTLISTED") {
+    return "text-amber-400 bg-amber-400/10";
+  }
+
+  if (status === "SUSPENDED") {
+    return "text-red-400 bg-red-400/10";
+  }
+
+  return "text-white/50 bg-white/5";
+}
+
+function availabilityClass(status: AvailabilityStatus) {
+  if (status === "AVAILABLE") {
+    return "text-emerald-400";
+  }
+
+  if (status === "BUSY") {
+    return "text-amber-400";
+  }
+
+  return "text-red-400";
+}
 
 export default function Team() {
-  const [members, setMembers] = useState<TeamRow[]>([]);
-  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<"ALL" | TeamStatus>("ALL");
-  const [selected, setSelected] = useState<TeamRow | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const [availability, setAvailability] =
+    useState<"ALL" | AvailabilityStatus>("ALL");
 
-  const loadTeam = async () => {
-    if (!supabase) {
-      setError("Supabase is not configured.");
-      setLoading(false);
-      return;
-    }
-
-    setLoading(true);
-    setError("");
-
-    try {
-      const { data: team, error: teamError } = await supabase
-        .from("team_members")
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (teamError) throw teamError;
-
-      const userIds = (team ?? [])
-        .map((member) => member.user_id)
-        .filter(Boolean);
-
-      let profiles: any[] = [];
-
-      if (userIds.length) {
-        const { data, error: profileError } = await supabase
-          .from("profiles")
-          .select("id, full_name, avatar_url, role, timezone")
-          .in("id", userIds);
-
-        if (profileError) throw profileError;
-        profiles = data ?? [];
-      }
-
-      const profileMap = new Map(
-        profiles.map((profile) => [profile.id, profile])
-      );
-
-      setMembers(
-        (team ?? []).map((member) => ({
-          ...member,
-          profile: profileMap.get(member.user_id) ?? null,
-        }))
-      );
-    } catch (err) {
-      console.error(err);
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to load team members."
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadTeam();
-  }, []);
-
-  const filteredMembers = useMemo(() => {
-    const query = search.trim().toLowerCase();
-
-    return members.filter((member) => {
-      const name =
-        member.profile?.full_name?.toLowerCase() ?? "";
-
-      const role =
-        member.profile?.role?.toLowerCase() ?? "";
+  const filteredTeam = useMemo(() => {
+    return DEMO_TEAM.filter((member) => {
+      const query = search.toLowerCase();
 
       const matchesSearch =
         !query ||
-        name.includes(query) ||
-        role.includes(query) ||
-        String(member.status ?? "")
-          .toLowerCase()
-          .includes(query);
+        member.full_name.toLowerCase().includes(query) ||
+        member.email.toLowerCase().includes(query) ||
+        member.skills.some((skill) =>
+          skill.toLowerCase().includes(query)
+        );
 
       const matchesStatus =
-        status === "ALL" || member.status === status;
+        status === "ALL" || member.team_status === status;
 
-      return matchesSearch && matchesStatus;
+      const matchesAvailability =
+        availability === "ALL" ||
+        member.availability_status === availability;
+
+      return (
+        matchesSearch &&
+        matchesStatus &&
+        matchesAvailability
+      );
     });
-  }, [members, search, status]);
-
-  const counts = useMemo(() => {
-    return {
-      total: members.length,
-      active: members.filter(
-        (m) =>
-          m.status !== "SUSPENDED" &&
-          m.status !== "ARCHIVED"
-      ).length,
-      available: members.filter(
-        (m) => m.availability === "AVAILABLE"
-      ).length,
-      review: members.filter(
-        (m) =>
-          m.status === "APPLICANT" ||
-          m.status === "SHORTLISTED" ||
-          m.status === "TRIAL"
-      ).length,
-    };
-  }, [members]);
-
-  const saveMember = async (
-    member: TeamRow,
-    nextStatus: TeamStatus
-  ) => {
-    setSaving(true);
-    setError("");
-
-    try {
-      await updateTeamMember(member.user_id, {
-        status: nextStatus,
-      });
-
-      setMembers((current) =>
-        current.map((item) =>
-          item.user_id === member.user_id
-            ? { ...item, status: nextStatus }
-            : item
-        )
-      );
-
-      setSelected((current) =>
-        current
-          ? { ...current, status: nextStatus }
-          : current
-      );
-    } catch (err) {
-      console.error(err);
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to update team member."
-      );
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const updateAvailability = async (
-    member: TeamRow,
-    availability: TeamMember["availability"]
-  ) => {
-    setSaving(true);
-    setError("");
-
-    try {
-      await updateTeamMember(member.user_id, {
-        // @ts-expect-error availability is stored by the Studio OS schema
-        availability,
-      });
-
-      setMembers((current) =>
-        current.map((item) =>
-          item.user_id === member.user_id
-            ? { ...item, availability }
-            : item
-        )
-      );
-
-      setSelected((current) =>
-        current
-          ? { ...current, availability }
-          : current
-      );
-    } catch (err) {
-      console.error(err);
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to update availability."
-      );
-    } finally {
-      setSaving(false);
-    }
-  };
+  }, [search, status, availability]);
 
   return (
-    <Layout>
-      <main className="min-h-screen bg-[#08090a] text-[#f5f7f8]">
-        <section className="pt-36 pb-12 px-6 md:px-12 border-b border-white/5">
-          <div className="max-w-[1400px] mx-auto">
-            <p className="label-orange mb-5">STUDIO OS / TEAM</p>
+    <div className="min-h-screen bg-[#08090a] text-white">
+      <div className="mx-auto max-w-[1500px] px-6 py-10 md:px-10">
+        <div className="mb-10 flex flex-col justify-between gap-6 md:flex-row md:items-end">
+          <div>
+            <p className="mb-3 text-xs tracking-[0.25em] text-white/40">
+              STUDIO OPERATING SYSTEM
+            </p>
 
-            <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-8">
-              <div>
-                <h1
-                  className="text-5xl md:text-7xl tracking-[-0.04em]"
-                  style={{
-                    fontFamily: "'Space Grotesk', sans-serif",
-                    fontWeight: 700,
-                  }}
-                >
-                  TEAM
-                </h1>
+            <h1 className="text-4xl font-semibold tracking-tight">
+              Team
+            </h1>
 
-                <p className="mt-4 max-w-xl text-[#bfc5cc]/60 leading-relaxed">
-                  Manage collaborators, roles, availability and
-                  production capacity.
-                </p>
+            <p className="mt-2 text-sm text-white/40">
+              Manage collaborators, availability and workload.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-3 text-sm font-medium text-black transition hover:bg-white/90"
+          >
+            <Plus size={16} />
+            Add Collaborator
+          </button>
+        </div>
+
+        <div className="mb-6 grid gap-3 md:grid-cols-[1fr_auto_auto]">
+          <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-4">
+            <Search size={17} className="text-white/30" />
+
+            <input
+              value={search}
+              onChange={(event) =>
+                setSearch(event.target.value)
+              }
+              placeholder="Search team..."
+              className="w-full bg-transparent py-3 text-sm outline-none placeholder:text-white/25"
+            />
+          </div>
+
+          <select
+            value={status}
+            onChange={(event) =>
+              setStatus(
+                event.target.value as "ALL" | TeamStatus
+              )
+            }
+            className="rounded-xl border border-white/10 bg-[#101112] px-4 py-3 text-sm text-white/70 outline-none"
+          >
+            <option value="ALL">All statuses</option>
+
+            {STATUS_OPTIONS.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={availability}
+            onChange={(event) =>
+              setAvailability(
+                event.target.value as
+                  | "ALL"
+                  | AvailabilityStatus
+              )
+            }
+            className="rounded-xl border border-white/10 bg-[#101112] px-4 py-3 text-sm text-white/70 outline-none"
+          >
+            <option value="ALL">All availability</option>
+
+            {AVAILABILITY_OPTIONS.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
+          <div className="hidden grid-cols-[2fr_1.2fr_1fr_1fr_1fr_40px] gap-4 border-b border-white/10 px-5 py-4 text-[10px] tracking-[0.18em] text-white/30 md:grid">
+            <span>COLLABORATOR</span>
+            <span>ROLE</span>
+            <span>STATUS</span>
+            <span>AVAILABILITY</span>
+            <span>WORKLOAD</span>
+            <span />
+          </div>
+
+          {filteredTeam.map((member) => (
+            <Link
+              key={member.id}
+              to={`/studio-os/team/${member.id}`}
+              className="grid gap-4 border-b border-white/5 px-5 py-5 transition hover:bg-white/[0.04] md:grid-cols-[2fr_1.2fr_1fr_1fr_1fr_40px] md:items-center"
+            >
+              <div className="flex items-center gap-4">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/10 text-sm font-medium">
+                  {member.full_name
+                    .split(" ")
+                    .map((name) => name[0])
+                    .join("")
+                    .slice(0, 2)}
+                </div>
+
+                <div>
+                  <p className="text-sm font-medium">
+                    {member.full_name}
+                  </p>
+
+                  <p className="mt-1 text-xs text-white/35">
+                    {member.email}
+                  </p>
+                </div>
               </div>
 
-              <button
-                type="button"
-                onClick={loadTeam}
-                className="self-start lg:self-auto border border-white/10 px-5 py-3 text-xs tracking-[0.16em] uppercase hover:border-white/30 transition"
+              <div className="text-sm text-white/55">
+                {member.role.replaceAll("_", " ")}
+              </div>
+
+              <div>
+                <span
+                  className={`inline-flex rounded-full px-2.5 py-1 text-[10px] tracking-wide ${statusClass(
+                    member.team_status
+                  )}`}
+                >
+                  {member.team_status}
+                </span>
+              </div>
+
+              <div
+                className={`flex items-center gap-2 text-xs ${availabilityClass(
+                  member.availability_status
+                )}`}
               >
-                Refresh
-              </button>
-            </div>
-          </div>
-        </section>
+                <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                {member.availability_status}
+              </div>
 
-        <section className="px-6 md:px-12 py-8">
-          <div className="max-w-[1400px] mx-auto">
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-px bg-white/10 border border-white/10">
-              <Stat label="TOTAL" value={counts.total} />
-              <Stat label="ACTIVE" value={counts.active} />
-              <Stat label="AVAILABLE" value={counts.available} />
-              <Stat label="IN REVIEW" value={counts.review} />
-            </div>
-          </div>
-        </section>
+              <div>
+                <div className="mb-2 flex items-center justify-between text-xs">
+                  <span className="text-white/40">
+                    {member.active_projects} projects
+                  </span>
 
-        <section className="px-6 md:px-12 pb-20">
-          <div className="max-w-[1400px] mx-auto">
-            <div className="flex flex-col md:flex-row gap-3 mb-6">
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search team..."
-                className="flex-1 bg-white/[0.03] border border-white/10 px-4 py-3 text-sm outline-none focus:border-white/30"
+                  <span className="text-white/60">
+                    {member.workload_percentage}%
+                  </span>
+                </div>
+
+                <div className="h-1 overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className="h-full rounded-full bg-white/70"
+                    style={{
+                      width: `${Math.min(
+                        member.workload_percentage,
+                        100
+                      )}%`,
+                    }}
+                  />
+                </div>
+              </div>
+
+              <MoreHorizontal
+                size={17}
+                className="hidden text-white/30 md:block"
+              />
+            </Link>
+          ))}
+
+          {filteredTeam.length === 0 && (
+            <div className="px-6 py-20 text-center">
+              <Users
+                size={28}
+                className="mx-auto mb-4 text-white/20"
               />
 
-              <select
-                value={status}
-                onChange={(e) =>
-                  setStatus(
-                    e.target.value as "ALL" | TeamStatus
-                  )
-                }
-                className="bg-[#101112] border border-white/10 px-4 py-3 text-sm outline-none"
-              >
-                <option value="ALL">ALL STATUS</option>
-                {STATUSES.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
-                  </option>
-                ))}
-              </select>
+              <p className="text-sm text-white/50">
+                No collaborators found.
+              </p>
             </div>
+          )}
+        </div>
 
-            {error && (
-              <div className="mb-6 border border-red-400/20 bg-red-400/5 px-4 py-3 text-sm text-red-300">
-                {error}
-              </div>
+        <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <StatCard
+            label="TEAM MEMBERS"
+            value={DEMO_TEAM.length}
+            icon={<Users size={16} />}
+          />
+
+          <StatCard
+            label="ACTIVE PROJECTS"
+            value={DEMO_TEAM.reduce(
+              (total, member) =>
+                total + member.active_projects,
+              0
             )}
+            icon={<BriefcaseBusiness size={16} />}
+          />
 
-            {loading ? (
-              <div className="border border-white/10 p-10 text-center text-[#bfc5cc]/50">
-                Loading team...
-              </div>
-            ) : filteredMembers.length === 0 ? (
-              <div className="border border-white/10 p-10 text-center text-[#bfc5cc]/50">
-                No team members found.
-              </div>
-            ) : (
-              <div className="border border-white/10 overflow-x-auto">
-                <table className="w-full min-w-[900px] border-collapse">
-                  <thead>
-                    <tr className="border-b border-white/10 text-left">
-                      <Th>COLLABORATOR</Th>
-                      <Th>ROLE</Th>
-                      <Th>STATUS</Th>
-                      <Th>AVAILABILITY</Th>
-                      <Th>WORKLOAD</Th>
-                      <Th>ACTIONS</Th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {filteredMembers.map((member) => (
-                      <tr
-                        key={member.user_id}
-                        className="border-b border-white/5 hover:bg-white/[0.025] transition"
-                      >
-                        <td className="px-5 py-5">
-                          <div className="flex items-center gap-3">
-                            {member.profile?.avatar_url ? (
-                              <img
-                                src={member.profile.avatar_url}
-                                alt=""
-                                className="w-10 h-10 rounded-full object-cover"
-                              />
-                            ) : (
-                              <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm">
-                                {(
-                                  member.profile?.full_name ??
-                                  "?"
-                                )
-                                  .charAt(0)
-                                  .toUpperCase()}
-                              </div>
-                            )}
-
-                            <div>
-                              <div className="font-medium">
-                                {member.profile?.full_name ??
-                                  "Unnamed collaborator"}
-                              </div>
-
-                              <div className="text-xs text-[#bfc5cc]/40">
-                                {member.profile?.timezone ??
-                                  "Timezone not set"}
-                              </div>
-                            </div>
-                          </div>
-                        </td>
-
-                        <td className="px-5 py-5 text-sm text-[#bfc5cc]/70">
-                          {member.profile?.role ??
-                            "TEAM_COLLABORATOR"}
-                        </td>
-
-                        <td className="px-5 py-5">
-                          <StatusBadge
-                            status={member.status}
-                          />
-                        </td>
-
-                        <td className="px-5 py-5 text-sm">
-                          {member.availability ?? "—"}
-                        </td>
-
-                        <td className="px-5 py-5">
-                          <div className="w-28">
-                            <div className="flex justify-between text-[11px] text-[#bfc5cc]/50 mb-1">
-                              <span>LOAD</span>
-                              <span>
-                                {member.current_workload ?? 0}%
-                              </span>
-                            </div>
-
-                            <div className="h-1 bg-white/10 overflow-hidden">
-                              <div
-                                className="h-full bg-[#f5f7f8]"
-                                style={{
-                                  width: `${Math.min(
-                                    100,
-                                    Math.max(
-                                      0,
-                                      Number(
-                                        member.current_workload ?? 0
-                                      )
-                                    )
-                                  )}%`,
-                                }}
-                              />
-                            </div>
-                          </div>
-                        </td>
-
-                        <td className="px-5 py-5">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setSelected(member)
-                            }
-                            className="text-xs uppercase tracking-[0.12em] border border-white/10 px-4 py-2 hover:border-white/30 transition"
-                          >
-                            Manage
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+          <StatCard
+            label="PENDING TASKS"
+            value={DEMO_TEAM.reduce(
+              (total, member) =>
+                total + member.pending_tasks,
+              0
             )}
-          </div>
-        </section>
+          />
 
-        {selected && (
-          <div className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm flex justify-end">
-            <aside className="w-full max-w-[520px] h-full overflow-y-auto bg-[#0d0e10] border-l border-white/10 p-6 md:p-8">
-              <div className="flex items-start justify-between gap-6 mb-10">
-                <div>
-                  <p className="label-orange mb-3">
-                    COLLABORATOR
-                  </p>
-
-                  <h2
-                    className="text-3xl"
-                    style={{
-                      fontFamily: "'Space Grotesk', sans-serif",
-                      fontWeight: 700,
-                    }}
-                  >
-                    {selected.profile?.full_name ??
-                      "Unnamed collaborator"}
-                  </h2>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => setSelected(null)}
-                  className="text-2xl text-white/50 hover:text-white"
-                >
-                  ×
-                </button>
-              </div>
-
-              <div className="space-y-8">
-                <Field label="ROLE">
-                  <p className="text-sm text-[#bfc5cc]/70">
-                    {selected.profile?.role ??
-                      "TEAM_COLLABORATOR"}
-                  </p>
-                </Field>
-
-                <Field label="STATUS">
-                  <select
-                    value={selected.status}
-                    disabled={saving}
-                    onChange={(e) =>
-                      saveMember(
-                        selected,
-                        e.target.value as TeamStatus
-                      )
-                    }
-                    className="w-full bg-[#151619] border border-white/10 px-4 py-3 text-sm"
-                  >
-                    {STATUSES.map((item) => (
-                      <option key={item} value={item}>
-                        {item}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-
-                <Field label="AVAILABILITY">
-                  <div className="grid grid-cols-3 gap-2">
-                    {(
-                      [
-                        "AVAILABLE",
-                        "BUSY",
-                        "UNAVAILABLE",
-                      ] as const
-                    ).map((item) => (
-                      <button
-                        key={item}
-                        type="button"
-                        disabled={saving}
-                        onClick={() =>
-                          updateAvailability(
-                            selected,
-                            item
-                          )
-                        }
-                        className={`px-3 py-3 text-[11px] tracking-[0.08em] border transition ${
-                          selected.availability === item
-                            ? "border-white/50 bg-white/10"
-                            : "border-white/10 hover:border-white/30"
-                        }`}
-                      >
-                        {item}
-                      </button>
-                    ))}
-                  </div>
-                </Field>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <InfoCard
-                    label="WORKLOAD"
-                    value={`${selected.current_workload ?? 0}%`}
-                  />
-
-                  <InfoCard
-                    label="COMPLETED"
-                    value={String(
-                      selected.completed_projects ?? 0
-                    )}
-                  />
-                </div>
-
-                <InfoCard
-                  label="RATE"
-                  value={
-                    selected.rate != null
-                      ? "Private"
-                      : "Not configured"
-                  }
-                />
-
-                <div className="pt-6 border-t border-white/10">
-                  <p className="text-xs uppercase tracking-[0.12em] text-[#bfc5cc]/40 mb-3">
-                    PROFILE
-                  </p>
-
-                  <p className="text-sm text-[#bfc5cc]/60 leading-relaxed">
-                    {selected.profile?.timezone
-                      ? `Timezone: ${selected.profile.timezone}`
-                      : "Timezone not configured."}
-                  </p>
-                </div>
-              </div>
-            </aside>
-          </div>
-        )}
-      </main>
-    </Layout>
+          <StatCard
+            label="AVG WORKLOAD"
+            value={`${Math.round(
+              DEMO_TEAM.reduce(
+                (total, member) =>
+                  total + member.workload_percentage,
+                0
+              ) / DEMO_TEAM.length
+            )}%`}
+          />
+        </div>
+      </div>
+    </div>
   );
 }
 
-function Stat({
+function StatCard({
   label,
   value,
+  icon,
 }: {
   label: string;
-  value: number;
+  value: string | number;
+  icon?: React.ReactNode;
 }) {
   return (
-    <div className="bg-[#0d0e10] p-5 md:p-7">
-      <p className="text-[10px] tracking-[0.16em] text-[#bfc5cc]/40 mb-3">
-        {label}
-      </p>
-      <p
-        className="text-3xl"
-        style={{
-          fontFamily: "'Space Grotesk', sans-serif",
-          fontWeight: 700,
-        }}
-      >
-        {value}
-      </p>
+    <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
+      <div className="mb-5 flex items-center justify-between text-white/30">
+        <span className="text-[10px] tracking-[0.18em]">
+          {label}
+        </span>
+
+        {icon}
+      </div>
+
+      <p className="text-2xl font-semibold">{value}</p>
     </div>
-  );
-}
-
-function Th({ children }: { children: React.ReactNode }) {
-  return (
-    <th className="px-5 py-4 text-[10px] tracking-[0.14em] text-[#bfc5cc]/40 font-normal">
-      {children}
-    </th>
-  );
-}
-
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <p className="text-[10px] tracking-[0.14em] text-[#bfc5cc]/40 mb-3">
-        {label}
-      </p>
-      {children}
-    </div>
-  );
-}
-
-function InfoCard({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="border border-white/10 p-4">
-      <p className="text-[10px] tracking-[0.12em] text-[#bfc5cc]/40 mb-2">
-        {label}
-      </p>
-      <p className="text-sm">{value}</p>
-    </div>
-  );
-}
-
-function StatusBadge({
-  status,
-}: {
-  status: TeamStatus;
-}) {
-  return (
-    <span className="inline-flex border border-white/10 px-2.5 py-1 text-[10px] tracking-[0.08em] text-[#bfc5cc]/70">
-      {status}
-    </span>
   );
 }

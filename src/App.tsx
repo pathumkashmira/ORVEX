@@ -71,6 +71,10 @@ import AdminBookingSettings from "@/pages/admin/BookingSettings";
 
 // Studio OS
 import StudioOSDashboard from "@/pages/studio-os/Dashboard";
+import StudioTeam from "@/pages/studio-os/Team";
+import StudioTeamMember from "@/pages/studio-os/TeamMember";
+import StudioAvailability from "@/pages/studio-os/Availability";
+import StudioWorkload from "@/pages/studio-os/Workload";
 
 import type { AppRole } from "@/types/studio";
 
@@ -424,13 +428,49 @@ const router = createBrowserRouter([
       /* ==================================================================== */
 
       {
-        path: "/studio-os",
-        element: (
-          <StudioGuard>
-            <StudioOSDashboard />
-          </StudioGuard>
-        ),
-      },
+  path: "/studio-os",
+  element: (
+    <StudioGuard>
+      <StudioOSDashboard />
+    </StudioGuard>
+  ),
+},
+
+{
+  path: "/studio-os/team",
+  element: (
+    <StudioGuard>
+      <StudioTeam />
+    </StudioGuard>
+  ),
+},
+
+{
+  path: "/studio-os/team/:id",
+  element: (
+    <StudioGuard>
+      <StudioTeamMember />
+    </StudioGuard>
+  ),
+},
+
+{
+  path: "/studio-os/availability",
+  element: (
+    <StudioGuard>
+      <StudioAvailability />
+    </StudioGuard>
+  ),
+},
+
+{
+  path: "/studio-os/workload",
+  element: (
+    <StudioGuard>
+      <StudioWorkload />
+    </StudioGuard>
+  ),
+},
 
       /* ==================================================================== */
       /* ADMIN                                                               */
