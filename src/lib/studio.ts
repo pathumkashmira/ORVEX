@@ -1,5 +1,5 @@
 import { supabase } from "@/lib/supabase";
-import type { StudioProject, StudioTask, TeamMember, TeamStatus } from "@/types/studio";
+import type { StudioProject, StudioTask, TeamMember, TeamStatus, AvailabilityStatus } from "@/types/studio";
 
 function client() {
   if (!supabase) throw new Error("Supabase is not configured.");
@@ -23,15 +23,45 @@ export async function getStudioOverview() {
   return {
     projects: (projects.data ?? []) as StudioProject[],
     tasks: (tasks.data ?? []) as StudioTask[],
-    team: (team.data ?? []).map((member) => ({
-      ...(member as TeamMember),
-      profile: profileMap.get(member.user_id) ?? null,
-    })),
+    team: (team.data ?? []).map((member) => ({ ...(member as TeamMember), profile: profileMap.get(member.user_id) ?? null })),
     profiles: profiles.data ?? [],
     notifications: notifications.data ?? [],
     projectMembers: projectMembers.data ?? [],
     taskAssignees: taskAssignees.data ?? [],
   };
+}
+
+export async function getTeamMembers() {
+  const db = client();
+  const { data, error } = await db.from("team_members").select("*").order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as TeamMember[];
+}
+
+export async function getTeamMember(userId: string) {
+  const db = client();
+  const { data, error } = await db.from("team_members").select("*").eq("user_id", userId).maybeSingle();
+  if (error) throw error;
+  return data as TeamMember | null;
+}
+
+export async function getAvailability(userId: string) {
+  const db = client();
+  const { data, error } = await db.from("availability").select("*").eq("user_id", userId).order("day_of_week", { ascending: true });
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function saveAvailability(userId: string, status: AvailabilityStatus, slots: Array<{ day_of_week: number; start_time: string; end_time: string; enabled: boolean }>) {
+  const db = client();
+  const { error: memberError } = await db.from("team_members").update({ availability_status: status, updated_at: new Date().toISOString() }).eq("user_id", userId);
+  if (memberError) throw memberError;
+  const { error: deleteError } = await db.from("availability").delete().eq("user_id", userId);
+  if (deleteError) throw deleteError;
+  if (slots.length) {
+    const { error: insertError } = await db.from("availability").insert(slots.map((slot) => ({ ...slot, user_id: userId })));
+    if (insertError) throw insertError;
+  }
 }
 
 export async function updateTaskStatus(taskId: string, status: StudioTask["status"]) {
@@ -48,7 +78,7 @@ export async function updateProjectStatus(projectId: string, status: StudioProje
   return data as StudioProject;
 }
 
-export async function updateTeamMember(userId: string, input: { status?: TeamStatus; rate?: number | null; experience?: string; portfolio_url?: string; current_workload?: number; completed_projects?: number }) {
+export async function updateTeamMember(userId: string, input: { status?: TeamStatus; rate?: number | null; experience?: string; portfolio_url?: string; current_workload?: number; completed_projects?: number; availability_status?: AvailabilityStatus }) {
   const db = client();
   const { error } = await db.from("team_members").update({ ...input, updated_at: new Date().toISOString() }).eq("user_id", userId);
   if (error) throw error;
