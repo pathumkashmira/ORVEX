@@ -24,10 +24,7 @@ export async function getStudioOverview() {
     projects: (projects.data ?? []) as StudioProject[],
     tasks: (tasks.data ?? []) as StudioTask[],
     team: (team.data ?? []).map((member) => ({ ...(member as TeamMember), profile: profileMap.get(member.user_id) ?? null })),
-    profiles: profiles.data ?? [],
-    notifications: notifications.data ?? [],
-    projectMembers: projectMembers.data ?? [],
-    taskAssignees: taskAssignees.data ?? [],
+    profiles: profiles.data ?? [], notifications: notifications.data ?? [], projectMembers: projectMembers.data ?? [], taskAssignees: taskAssignees.data ?? [],
   };
 }
 
@@ -85,9 +82,13 @@ export async function updateProjectStatus(projectId: string, status: StudioProje
   return data as StudioProject;
 }
 
-export async function updateTeamMember(userId: string, input: { status?: TeamStatus; rate?: number | null; experience?: string; portfolio_url?: string; current_workload?: number; completed_projects?: number; availability_status?: AvailabilityStatus }) {
+export async function updateTeamMember(id: string, input: { status?: TeamStatus; rate?: number | null; experience?: string; portfolio_url?: string; current_workload?: number; completed_projects?: number; availability_status?: AvailabilityStatus }) {
   const db = client();
-  const { error } = await db.from("team_members").update({ ...input, updated_at: new Date().toISOString() }).eq("user_id", userId);
+  const payload = { ...input, updated_at: new Date().toISOString() };
+  const { data: byId, error: idError } = await db.from("team_members").update(payload).eq("id", id).select("id").maybeSingle();
+  if (idError) throw idError;
+  if (byId) return;
+  const { error } = await db.from("team_members").update(payload).eq("user_id", id);
   if (error) throw error;
 }
 
@@ -98,75 +99,14 @@ export async function assignTask(taskId: string, userId: string) {
   await notify(userId, "task_assigned", "New task assigned", "A task has been assigned to you.", "task", taskId);
 }
 
-export async function removeTaskAssignee(taskId: string, userId: string) {
-  const db = client();
-  const { error } = await db.from("task_assignees").delete().eq("task_id", taskId).eq("user_id", userId);
-  if (error) throw error;
-}
-
-export async function assignProject(projectId: string, userId: string) {
-  const db = client();
-  const { error } = await db.from("project_members").upsert({ project_id: projectId, user_id: userId }, { onConflict: "project_id,user_id" });
-  if (error) throw error;
-  await notify(userId, "project_assigned", "Added to project", "You have been added to a project.", "project", projectId);
-}
-
-export async function removeProjectMember(projectId: string, userId: string) {
-  const db = client();
-  const { error } = await db.from("project_members").delete().eq("project_id", projectId).eq("user_id", userId);
-  if (error) throw error;
-}
-
-export async function markNotificationRead(id: string) {
-  const db = client();
-  const { error } = await db.from("notifications").update({ read_at: new Date().toISOString() }).eq("id", id);
-  if (error) throw error;
-}
-
-export async function notify(userId: string, eventType: string, title: string, body: string, entityType?: string, entityId?: string) {
-  const db = client();
-  const { error } = await db.from("notifications").insert({ user_id: userId, event_type: eventType, title, body, entity_type: entityType ?? null, entity_id: entityId ?? null });
-  if (error) throw error;
-}
-
-export async function createProject(input: Pick<StudioProject, "project_code" | "name" | "description" | "category" | "priority" | "budget" | "deadline">) {
-  const db = client();
-  const { data, error } = await db.from("projects").insert({ ...input, status: "LEAD" }).select("*").single();
-  if (error) throw error;
-  return data as StudioProject;
-}
-
-export async function createTask(input: Pick<StudioTask, "project_id" | "title" | "description" | "priority" | "budget" | "deadline" | "deliverables">) {
-  const db = client();
-  const { data: auth } = await db.auth.getUser();
-  const { data, error } = await db.from("tasks").insert({ ...input, status: "TODO", created_by: auth.user?.id ?? null }).select("*").single();
-  if (error) throw error;
-  return data as StudioTask;
-}
-
-export async function addTaskChecklist(taskId: string, title: string) {
-  const db = client();
-  const { data, error } = await db.from("task_checklists").insert({ task_id: taskId, title }).select("*").single();
-  if (error) throw error;
-  return data;
-}
-
-export async function toggleTaskChecklist(id: string, isComplete: boolean) {
-  const db = client();
-  const { error } = await db.from("task_checklists").update({ is_complete: isComplete }).eq("id", id);
-  if (error) throw error;
-}
-
-export async function addTaskComment(taskId: string, body: string, visibility: "INTERNAL" | "CLIENT" = "INTERNAL") {
-  const db = client();
-  const { data: auth } = await db.auth.getUser();
-  const { error } = await db.from("task_comments").insert({ task_id: taskId, author_id: auth.user?.id, body, visibility });
-  if (error) throw error;
-}
-
-export async function logAudit(action: string, entityType: string, entityId?: string, metadata: Record<string, unknown> = {}) {
-  const db = client();
-  const { data: auth } = await db.auth.getUser();
-  const { error } = await db.from("audit_logs").insert({ actor_id: auth.user?.id ?? null, action, entity_type: entityType, entity_id: entityId ?? null, metadata });
-  if (error) throw error;
-}
+export async function removeTaskAssignee(taskId: string, userId: string) { const db = client(); const { error } = await db.from("task_assignees").delete().eq("task_id", taskId).eq("user_id", userId); if (error) throw error; }
+export async function assignProject(projectId: string, userId: string) { const db = client(); const { error } = await db.from("project_members").upsert({ project_id: projectId, user_id: userId }, { onConflict: "project_id,user_id" }); if (error) throw error; await notify(userId, "project_assigned", "Added to project", "You have been added to a project.", "project", projectId); }
+export async function removeProjectMember(projectId: string, userId: string) { const db = client(); const { error } = await db.from("project_members").delete().eq("project_id", projectId).eq("user_id", userId); if (error) throw error; }
+export async function markNotificationRead(id: string) { const db = client(); const { error } = await db.from("notifications").update({ read_at: new Date().toISOString() }).eq("id", id); if (error) throw error; }
+export async function notify(userId: string, eventType: string, title: string, body: string, entityType?: string, entityId?: string) { const db = client(); const { error } = await db.from("notifications").insert({ user_id: userId, event_type: eventType, title, body, entity_type: entityType ?? null, entity_id: entityId ?? null }); if (error) throw error; }
+export async function createProject(input: Pick<StudioProject, "project_code" | "name" | "description" | "category" | "priority" | "budget" | "deadline">) { const db = client(); const { data, error } = await db.from("projects").insert({ ...input, status: "LEAD" }).select("*").single(); if (error) throw error; return data as StudioProject; }
+export async function createTask(input: Pick<StudioTask, "project_id" | "title" | "description" | "priority" | "budget" | "deadline" | "deliverables">) { const db = client(); const { data: auth } = await db.auth.getUser(); const { data, error } = await db.from("tasks").insert({ ...input, status: "TODO", created_by: auth.user?.id ?? null }).select("*").single(); if (error) throw error; return data as StudioTask; }
+export async function addTaskChecklist(taskId: string, title: string) { const db = client(); const { data, error } = await db.from("task_checklists").insert({ task_id: taskId, title }).select("*").single(); if (error) throw error; return data; }
+export async function toggleTaskChecklist(id: string, isComplete: boolean) { const db = client(); const { error } = await db.from("task_checklists").update({ is_complete: isComplete }).eq("id", id); if (error) throw error; }
+export async function addTaskComment(taskId: string, body: string, visibility: "INTERNAL" | "CLIENT" = "INTERNAL") { const db = client(); const { data: auth } = await db.auth.getUser(); const { error } = await db.from("task_comments").insert({ task_id: taskId, author_id: auth.user?.id, body, visibility }); if (error) throw error; }
+export async function logAudit(action: string, entityType: string, entityId?: string, metadata: Record<string, unknown> = {}) { const db = client(); const { data: auth } = await db.auth.getUser(); const { error } = await db.from("audit_logs").insert({ actor_id: auth.user?.id ?? null, action, entity_type: entityType, entity_id: entityId ?? null, metadata }); if (error) throw error; }
